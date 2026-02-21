@@ -72,3 +72,9 @@
   - 分辨率对齐: bar-release(最长边约 3760)上,
     - `DATA_FACTOR=4` 约等价 `--max-size 960`
     - `DATA_FACTOR=8` 约等价 `--max-size 480`
+
+## 2026-02-21T10:10:00+00:00 更正: bar-release 的 `--max-size` 示例参数
+
+- FreeTimeGsVanilla 的 `cfg.yml` 显示 `data_factor: 4`,而 bar-release 原视频最长边约 3760,
+  所以 1/4 下采样更接近 `3760/4=940`,不是 960(960 更像是 3840/4 的标准 4K 情况).
+- 已更新 `README.md` 的 bar-release 示例命令,将 `--max-size` 从 960 更正为 940.

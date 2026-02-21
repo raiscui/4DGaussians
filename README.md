@@ -189,7 +189,7 @@ pixi run prep-multipleview \
   --dataset-name bar-release_mv_test \
   --limit-cams 2 \
   --fps 2 \
-  --max-size 960 \
+  --max-size 940 \
   --max-frames 20 \
   --overwrite \
   --pointcloud sparse \
@@ -203,7 +203,7 @@ pixi run prep-multipleview \
   --videos-dir /cloud/cloud-s3fs/SelfCap/bar-release/videos \
   --dataset-name bar-release \
   --fps 2 \
-  --max-size 960
+  --max-size 940
 ```
 
 #### Important flags
@@ -215,6 +215,7 @@ pixi run prep-multipleview \
   - `--fps 1` 更适合长视频做"低频采样"(例如 1fps 覆盖 60 秒).
 - `--max-size`: 抽帧时对图片做缩放,控制最长边(保持比例).默认 `1920`.
   - 对 4K 级别视频,建议 `--max-size 960`(约等价于 1/4)或更小.
+  - 本文示例的 bar-release 竖屏视频最长边约 3760,按 1/4 对齐时更接近 `--max-size 940`.
 - `--max-frames`: 每路相机最多抽多少帧(0 表示不限制).
 - `--pointcloud`: 点云来源:
   - `sparse`(默认): 直接用 COLMAP sparse 的 points3D,速度快.

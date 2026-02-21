@@ -244,3 +244,14 @@ FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
 
 - `DATA_FACTOR=4` 约等价 `--max-size 960`
 - `DATA_FACTOR=8` 约等价 `--max-size 480`
+
+### 更正: bar-release 的 1/4 长边是 940,不是 960
+
+- bar-release 原视频尺寸是 `2110x3760`(可用 `ffprobe`/PIL 查看).
+- FreeTimeGsVanilla 的 `results/bar_release_full/out_0_61/cfg.yml` 里 `data_factor: 4`,
+  等效分辨率更接近:
+  - `2110/4 ≈ 528`
+  - `3760/4 = 940`
+  它的输出 mp4(`traj_4d_step29999.mp4`)显示为 `528x944`,主要是对齐到 16 的倍数.
+- 因此本仓库 README 里 bar-release 的示例命令,已把 `--max-size` 从 960 更正为 940.
+- `--max-size 960` 更适合标准 4K(3840 长边)按 1/4 下采样的场景.
