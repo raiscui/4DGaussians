@@ -61,3 +61,14 @@
 - 小样本验证通过:
   - 使用 `/cloud/cloud-s3fs/SelfCap/bar-release/videos` 前 2 路视频生成: `data/multipleview/bar-release_mv_test/`
   - `readMultipleViewinfos("data/multipleview/bar-release_mv_test")` 可正常读取(2 cams * 20 frames => train 40, test 6)
+
+## 2026-02-21T10:00:00+00:00 追加: README 手册化与对标 FreeTimeGsVanilla 的体量建议
+
+- README 增加 MultipleView(mp4) 一键生成说明与参数手册:
+  - `README.md` 新增 "Generate MultipleView data from multi-camera videos (mp4)" 小节
+  - 包含 quick sanity run / full run / flags 解释 / verify 命令
+- 给出对标 FreeTimeGsVanilla 默认 demo 体量([0,61) 连续帧)的参数建议:
+  - 帧数对齐: `--fps 60 --max-frames 61`
+  - 分辨率对齐: bar-release(最长边约 3760)上,
+    - `DATA_FACTOR=4` 约等价 `--max-size 960`
+    - `DATA_FACTOR=8` 约等价 `--max-size 480`

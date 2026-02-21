@@ -209,3 +209,38 @@ LLFF 的核心做法是:
      - `--SiftMatching.use_gpu 0`
 
 因此脚本里需要显式设置上述选项,否则会出现 SIGABRT,看起来像 "colmap 自己崩了".
+
+## 2026-02-21T10:00:00+00:00 笔记: 对标 FreeTimeGsVanilla 的“体量”参数建议
+
+### FreeTimeGsVanilla 的默认体量是什么?
+
+FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
+
+- frame range: `[0, 61)`(end exclusive)
+- 含义: 每路相机取 61 帧连续帧(如果原视频是 60fps,约等于 1 秒)
+
+此外它会用 `DATA_FACTOR=4/8` 在训练侧对图片下采样.
+这意味着:
+
+- 它可能保存原图抽帧,但训练实际看到的是更小的分辨率.
+
+### 我们的 MultipleView 生成脚本如何对齐?
+
+本仓库的 `scripts/preprocess_multipleview_from_videos.py` 主要可控项是:
+
+- `--max-frames`: 控制每路相机输出帧数
+- `--fps`: 控制抽帧频率(单位: 帧/秒)
+- `--max-size`: 控制输出图片最长边,等价于"提前做 data_factor 下采样"
+
+因此,想对齐 "61 帧" 的体量,可直接:
+
+- `--fps 60 --max-frames 61`
+
+想对齐 `DATA_FACTOR` 的有效分辨率,可以用下面的近似关系:
+
+- `max_size ≈ max(original_H, original_W) / DATA_FACTOR`
+
+以 bar-release 竖屏视频(最长边约 3760)为例:
+
+- `DATA_FACTOR=4` 约等价 `--max-size 960`
+- `DATA_FACTOR=8` 约等价 `--max-size 480`

@@ -162,6 +162,72 @@ You need to ensure that the data folder is organized as follows after running mu
 │   	  | poses_bounds_multipleview.npy
 ```
 
+### (Recommended) Generate MultipleView data from multi-camera videos (mp4)
+
+如果你的原始输入是"每路相机一个 mp4"(例如一个目录下有 `02.mp4`, `03.mp4`, ...),
+推荐使用我们提供的全流程脚本,一键完成:
+
+- 抽帧到 `camXX/frame_*.jpg`
+- 用每路相机的首帧跑一次 COLMAP,得到静态多相机内外参(`sparse_`)
+- 生成 `poses_bounds_multipleview.npy`(LLFF 兼容格式)
+- 生成 `points3D_multipleview.ply`(并下采样到 <= 40000 点)
+
+该脚本已经针对 headless 服务器环境做过兼容:
+- 自动设置 `QT_QPA_PLATFORM=offscreen`
+- 强制禁用 SIFT GPU,避免无 OpenGL context 时崩溃
+
+#### Prerequisites
+
+- `pixi install` 并完成 `pixi run install-ext`
+- 系统安装 `ffmpeg` 与 `colmap`
+
+#### Quick sanity run (2 cameras, 20 frames each)
+
+```bash
+pixi run prep-multipleview \
+  --videos-dir /cloud/cloud-s3fs/SelfCap/bar-release/videos \
+  --dataset-name bar-release_mv_test \
+  --limit-cams 2 \
+  --fps 2 \
+  --max-size 960 \
+  --max-frames 20 \
+  --overwrite \
+  --pointcloud sparse \
+  --keep-colmap-tmp
+```
+
+#### Full run (all cameras)
+
+```bash
+pixi run prep-multipleview \
+  --videos-dir /cloud/cloud-s3fs/SelfCap/bar-release/videos \
+  --dataset-name bar-release \
+  --fps 2 \
+  --max-size 960
+```
+
+#### Important flags
+
+- `--videos-dir`: 输入视频目录.脚本会按文件名排序,并映射为 `cam01`, `cam02`, ...
+- `--dataset-name`: 输出到 `data/multipleview/<dataset-name>/`.
+- `--fps`: 抽帧帧率.默认 `10`.
+  - `--fps 60` + `--max-frames 61` 等价于取前 61 帧(约 1 秒@60fps),体量接近很多 demo pipeline.
+  - `--fps 1` 更适合长视频做"低频采样"(例如 1fps 覆盖 60 秒).
+- `--max-size`: 抽帧时对图片做缩放,控制最长边(保持比例).默认 `1920`.
+  - 对 4K 级别视频,建议 `--max-size 960`(约等价于 1/4)或更小.
+- `--max-frames`: 每路相机最多抽多少帧(0 表示不限制).
+- `--pointcloud`: 点云来源:
+  - `sparse`(默认): 直接用 COLMAP sparse 的 points3D,速度快.
+  - `dense`: 走 COLMAP MVS 生成 fused.ply,再下采样,更慢但更密.
+- `--overwrite`: 允许覆盖已存在的 `camXX/frame_*.jpg`.
+- `--keep-colmap-tmp`: 保留中间 COLMAP 工作目录到 `data/multipleview/<dataset>/_colmap_tmp/` 便于排查.
+
+#### Verify output
+
+```bash
+pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release'); print('ok', len(s.train_cameras), len(s.test_cameras))"
+```
+
 
 ## Training
 
