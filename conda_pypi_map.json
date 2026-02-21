@@ -1,0 +1,15 @@
+{
+  "numpy": "numpy",
+  "scipy": "scipy",
+  "matplotlib": "matplotlib",
+  "tqdm": "tqdm",
+  "pillow": "pillow",
+  "imageio": "imageio",
+  "opencv": "opencv-python",
+  "open3d": "open3d",
+  "pip": "pip",
+  "setuptools": "setuptools",
+  "wheel": "wheel",
+  "ninja": "ninja"
+}
+

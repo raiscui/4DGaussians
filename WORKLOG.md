@@ -1,0 +1,50 @@
+# WORKLOG
+
+> 只追加,不在中间插入.
+
+## 2026-02-21T06:26:20+00:00
+
+- 新任务开始: 将 notebook 依赖安装迁移到 Pixi.
+
+## 2026-02-21T06:26:20+00:00 完成情况
+
+- 新增 `pixi.toml`,把 notebook/脚本运行所需依赖收敛到 Pixi manifest,并把两个 CUDA 子模块作为 editable PyPI 依赖纳入安装流程.
+- notebook 改造:
+  - `4DGaussians.ipynb`: 用 `pixi install` 替代 pip 安装,并把所有 `!python ...` 统一改为 `!pixi run python ...`.
+  - `4DGaussians_rais.ipynb`: 同上,另外把 submodule 重装步骤改为 `!pixi run python -m pip install -e ...` 以便在补丁后重编译扩展.
+- 移除 `mmcv` 重依赖:
+  - `utils/params_utils.py` 增加 `load_config_file()` 支持 `_base_` 继承与 dict 合并.
+  - `train.py`,`render.py`,`export_perframe_3DGS.py`,`merge_many_4dgs.py` 改用轻量配置加载器.
+  - `requirements.txt` 移除 `mmcv` 与 `argparse`.
+- 文档与忽略规则:
+  - `README.md` 增加 Pixi 安装与运行示例.
+  - `.gitignore` 增加忽略 `.pixi/`.
+
+- 追加修复: Pixi DNS 解析失败导致无法安装
+  - 新增 `pixi.mirrors.toml`,提供 conda channel 镜像重定向.
+  - 两个 notebook 的安装命令增加回退: `pixi install` 失败则自动改用 `pixi install --config pixi.mirrors.toml`.
+  - `README.md` 增加 DNS 报错时的替代命令说明.
+
+## 2026-02-21T08:13:26+00:00 追加修复: 版本组合与 Pixi 求解稳定性
+
+- 切换 PyTorch 版本组合:
+  - conda `pytorch` channel 无 `pytorch 2.6`/`pytorch-cuda 12.6`,改为 PyPI cu126 wheel(`torch~=2.6.0`,`torchvision~=0.21.0`).
+  - `pixi.toml` 默认 Python 升级到 `3.12.*`.
+- 修复错误用法:
+  - `pixi install` 不支持 `--config`,镜像配置改为写入 `.pixi/config.toml`(notebook 已更新回退逻辑).
+- 解决 GitHub DNS 依赖:
+  - 新增 `conda_pypi_map.json`,并在 `pixi.toml` 里用 `conda-pypi-map` 指向本地映射,避免访问 `raw.githubusercontent.com`.
+- 调整 CUDA 扩展安装方式:
+  - 不再把两个子模块作为 pypi path 依赖参与 lock(避免 metadata 阶段因 `import torch` 失败).
+  - 新增 Pixi task: `pixi run install-ext`,并在 notebook 安装步骤中自动执行.
+
+## 2026-02-21T08:31:00+00:00 追加修复: Pixi editable 扩展安装与 `simple_knn` 导入
+
+- 修复 `pixi run install-ext` 报 `ModuleNotFoundError: torch`:
+  - `pixi.toml` 的 `install-ext` task 增加 `--no-build-isolation`,让 pip 构建过程直接复用 Pixi 环境里的 torch.
+- 修复 `simple_knn` 安装成功但无法导入:
+  - 新增 `submodules/simple-knn/simple_knn/__init__.py`,确保 `from simple_knn._C import distCUDA2` 在运行期可用.
+- 自检通过:
+  - `pixi run python -c "import torch; print(torch.__version__, torch.version.cuda)"`
+  - `pixi run install-ext`
+  - `pixi run python -c "import diff_gaussian_rasterization; from simple_knn._C import distCUDA2; print('ok')"`

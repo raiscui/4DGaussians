@@ -54,6 +54,34 @@ pip install -e submodules/simple-knn
 
 In our environment, we use pytorch=1.13.1+cu116.
 
+### Pixi (Alternative)
+
+If you prefer a more reproducible, one-command environment setup (especially for notebooks),
+you can use Pixi:
+
+```bash
+# Install pixi (Linux/macOS)
+curl -fsSL https://pixi.sh/install.sh | sh
+
+cd 4DGaussians
+git submodule update --init --recursive
+
+# Install all dependencies defined in pixi.toml
+pixi install
+
+# Build & install the two CUDA extensions used by this repo
+pixi run install-ext
+
+# If you hit DNS errors for conda.anaconda.org (Name does not resolve),
+# you can enable the provided mirror config by writing it to Pixi's local config:
+# mkdir -p .pixi
+# cp -f pixi.mirrors.toml .pixi/config.toml
+# pixi install
+
+# Example run
+pixi run python train.py -s data/dnerf/bouncingballs --port 6017 --expname "dnerf/bouncingballs" --configs arguments/dnerf/bouncingballs.py
+```
+
 ## Data Preparation
 
 **For synthetic scenes:**

@@ -1,0 +1,63 @@
+[workspace]
+name = "4dgaussians"
+version = "0.0.0"
+description = "4D Gaussian Splatting for Real-Time Dynamic Scene Rendering"
+# channel 顺序说明:
+# - 这里仅使用 conda-forge,用于提供 Python 与通用依赖.
+# - PyTorch(CUDA)改用 PyPI 官方 wheel,以满足 "CUDA 12.6 + PyTorch 2.6" 组合.
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+channel-priority = "strict"
+
+# 避免 Pixi 在 conda+PyPI 混合依赖时访问 GitHub 拉取默认 mapping(某些网络环境下会 DNS 失败).
+# 我们在仓库内提供一个最小映射文件,覆盖 conda-forge 的 conda<->pypi 名称映射需求即可.
+conda-pypi-map = { conda-forge = "conda_pypi_map.json" }
+
+[dependencies]
+# 说明:
+# - 本配置改为 Python 3.12 + PyTorch 2.6 + CUDA 12.6(用户指定组合).
+# - 如需严格复现实验环境,可以后续再加 feature,做 python/torch/cuda 的多套组合.
+python = "3.12.*"
+pip = "*"
+setuptools = "*"
+wheel = "*"
+ninja = "*"
+
+# 核心科学计算与可视化依赖
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+tqdm = "*"
+pillow = "*"
+
+# I/O 与视频写入
+imageio = "*"
+ffmpeg = "*"
+
+# 项目代码里有直接 import cv2
+opencv = "*"
+
+# 项目训练链路会 import open3d
+open3d = "*"
+
+[pypi-dependencies]
+# PyTorch 官方 CUDA wheel.
+#
+# 说明:
+# - conda 的 `pytorch` channel 目前最高只有 `pytorch-cuda=12.4` 和 `pytorch=2.5.x`,
+#   无法满足 "CUDA 12.6 + PyTorch 2.6" 组合.
+# - 因此这里改用 PyPI 的 cu126 wheel 索引.
+torch = { version = "~=2.6.0", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = "~=0.21.0", index = "https://download.pytorch.org/whl/cu126" }
+
+easydict = "*"
+lpips = "*"
+plyfile = "*"
+pytorch-msssim = "*"
+
+[tasks]
+# 这些 task 主要用于本地复现,notebook 里也可以直接 `pixi run ...` 执行.
+install-ext = "python -m pip install --no-build-isolation -e submodules/depth-diff-gaussian-rasterization -e submodules/simple-knn"
+train = "python train.py"
+render = "python render.py"
+metrics = "python metrics.py"

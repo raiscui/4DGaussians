@@ -1,0 +1,174 @@
+# 任务计划: 将 notebook 依赖安装迁移到 Pixi
+
+时间: 2026-02-21T06:26:20+00:00
+
+## 目标
+
+把项目里 notebook(主要是 `4DGaussians.ipynb` 和 `4DGaussians_rais.ipynb`)的依赖安装方式,从 `pip install -r requirements.txt` 等命令,改成基于 `pixi.toml` 的 `pixi install`.
+
+同时把 notebook 里所有直接运行的脚本命令:
+
+- `!python train.py ...`
+- `!python render.py ...`
+
+统一改成:
+
+- `!pixi run python train.py ...`
+- `!pixi run python render.py ...`
+
+这样 notebook 即使运行在 Colab/Jupyter 的默认 kernel 里,也能保证训练/渲染脚本是在 Pixi 环境中执行,依赖来源一致且可复现.
+
+## 阶段
+
+- [x] 阶段1: 现状调研与方案确定
+- [x] 阶段2: 设计 Pixi 依赖清单
+- [x] 阶段3: 落地 `pixi.toml` 与 notebook 改造
+- [x] 阶段4: 自检与交付(补文档与工作记录)
+
+## 方案备选(至少 2 条路径)
+
+### 方案A(推荐): 完整 Pixi 化(更可复现,一次到位)
+
+- 新增 `pixi.toml`,把 notebook 运行所需的关键依赖(含 PyTorch,Open3D,以及两个 CUDA 扩展等)写入 Pixi manifest.
+- notebook 里只做三件事:
+  1) 安装 pixi CLI(若未安装).
+  2) `pixi install` 安装环境.
+  3) 所有脚本统一 `pixi run python ...` 执行.
+- 优点: notebook 运行路径最干净,依赖来源统一,排障成本更低.
+- 代价: 需要一次性梳理依赖,并处理少数包的 conda/pypi 选择.
+
+### 方案B: 先能用(改动最少,后续再优雅)
+
+- 只在 notebook 里把 `pip install` 换成:
+  - `pixi install`
+  - `pixi run pip install -r requirements.txt`
+- 依赖仍主要由 `requirements.txt` 驱动.
+- 优点: 迁移快,基本不需要梳理 conda 依赖.
+- 代价: 仍会碰到编译/轮子缺失问题,可复现性也较弱.
+
+## 做出的决定
+
+- 采用方案A.
+  - 理由: 目标是"把 notebook 的依赖安装改造成 pixi 安装",方案A能让 notebook 从入口到执行都走 Pixi,语义最一致.
+
+## 关键问题
+
+1. Pixi 环境的 Python 版本选什么?
+   - 决定: 先按 notebook/Colab 的现实情况选 `python=3.10.*`.
+2. PyTorch/CUDA 版本怎么 pin?
+   - 决定: 先 pin 到论文作者 README 提到的 `pytorch=1.13.1` + `cuda=11.6`(通过 `pytorch-cuda=11.6`).
+
+## 遇到的错误
+
+- (暂无)
+
+## 状态
+
+**已完成**: notebook 依赖安装已迁移到 Pixi,并完成收尾记录与自检.
+
+---
+
+## 2026-02-21T06:26:20+00:00 追加: Pixi DNS 报错修复
+
+### 现象
+
+用户在执行 `pixi install` 时失败,报错类似:
+
+- `failed to solve requirements ...`
+- `dns error: failed to lookup address information: Name does not resolve`
+- 目标域名: `conda.anaconda.org`
+
+### 诊断(本质)
+
+这不是依赖冲突,而是网络层面的 DNS 解析失败.
+Pixi 默认会从 `conda.anaconda.org` 拉取 `conda-forge`/`pytorch`/`nvidia` 三个 channel 的 repodata.
+当 DNS 无法解析该域名时,solver 会在下载 repodata 阶段直接失败.
+
+### 修复(回到现象层)
+
+- 新增 `pixi.mirrors.toml`,提供 conda channel 镜像重定向配置.
+- notebook 的 `pixi install` 改为:
+  - 先尝试 `pixi install`
+  - 失败则自动回退 `pixi install --config pixi.mirrors.toml`
+- README 增加 DNS 报错时的替代命令说明.
+
+### 状态
+
+已落地上述修复.
+
+---
+
+## 2026-02-21T08:13:26+00:00 追加: 版本组合切换与安装流程调整
+
+### 现象
+
+- 用户遇到 conda 侧报错:
+  - `pytorch-cuda 11.6 ... is excluded because candidate not in requested channel: 'nvidia'`
+  - 或 `No candidates were found for pytorch-cuda 12.6.*`
+- 用户希望使用: `python 3.12` + `cuda 12.6` + `pytorch 2.6`.
+
+### 诊断(本质)
+
+- `pixi install` 不支持 `--config`,之前的写法需要更正为 `.pixi/config.toml`.
+- conda 的 `pytorch` channel 当前并没有 `pytorch 2.6` 或 `pytorch-cuda 12.6`,因此无法用纯 conda 满足该组合.
+- 当项目同时包含 conda 与 PyPI 依赖时,Pixi 默认会拉取 conda<->pypi mapping,部分网络环境下访问 GitHub 也会失败.
+- 本仓库的两个 CUDA 扩展子模块 `setup.py` 顶层会 `import torch`,如果把它们当成 pypi path 依赖参与 lock,会在 torch 未安装时失败.
+
+### 修复(回到现象层)
+
+- PyTorch 版本组合改为 PyPI 官方 wheel:
+  - `torch ~=2.6.0`, `torchvision ~=0.21.0`
+  - index: `https://download.pytorch.org/whl/cu126`(对应 CUDA 12.6)
+- 增加本地 mapping:
+  - `pixi.toml` 增加 `conda-pypi-map = { conda-forge = "conda_pypi_map.json" }`
+- CUDA 扩展改为安装后置:
+  - `pixi.toml` 提供 task: `pixi run install-ext`
+  - notebook 在 `pixi install` 后会自动执行 `pixi run install-ext`
+- 镜像配置正确落地:
+  - 失败回退逻辑改为写入 `.pixi/config.toml`,而不是使用不存在的 `--config` 参数.
+
+### 状态
+
+已完成上述调整,并已通过 `pixi lock` 验证求解成功.
+
+---
+
+## 2026-02-21T08:31:00+00:00 追加: 修复 `pixi run install-ext` 失败(torch 在 build isolation 中缺失)
+
+### 现象
+
+用户在 notebook 里执行 `pixi run install-ext` 时失败,核心报错为:
+
+- `ModuleNotFoundError: No module named 'torch'`
+- 出现场景: pip "Getting requirements to build editable" 阶段
+
+### 诊断(本质)
+
+- `pip install -e ...` 默认启用 PEP517/PEP660 的 build isolation.
+- pip 会创建一个临时的构建虚拟环境(`/tmp/pip-build-env-*/overlay/...`).
+- 两个 CUDA 扩展子模块的 `setup.py` 在顶层直接 `import torch`,
+  导致临时构建环境里没有 torch 时立刻报错.
+
+### 方案备选(至少 2 条路径)
+
+#### 方案A(推荐): 禁用 build isolation,复用 Pixi 环境里的 torch
+
+- 修改 Pixi task `install-ext`,为 pip 增加 `--no-build-isolation`.
+- 优点: 不改子模块源码,改动集中且可控.
+- 代价: 需要保证在执行 `install-ext` 前,Pixi 环境已安装好 torch.
+
+#### 方案B: 改子模块 `setup.py`,避免顶层 import torch
+
+- 把 `from torch.utils.cpp_extension import ...` 延迟到 `setup()` 调用内部再 import.
+- 优点: 即使隔离构建也能跑过 metadata 阶段,更符合打包最佳实践.
+- 代价: 会修改 submodule,需要更谨慎,也可能和上游更新冲突.
+
+### 阶段(本次追加任务)
+
+- [x] 阶段1: 调整 Pixi task(禁用 build isolation)
+- [x] 阶段2: 复验 torch 导入与扩展安装
+- [x] 阶段3: 更新记录(笔记/错误修复/工作日志)
+
+### 状态
+
+**已完成**: `pixi run install-ext` 在 Pixi 环境下可稳定编译安装,并修复 `simple_knn` 运行期导入问题.

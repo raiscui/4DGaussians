@@ -105,9 +105,8 @@ if __name__ == "__main__":
     args = get_combined_args(parser)
     print("Rendering " , args.model_path)
     if args.configs:
-        import mmcv
-        from utils.params_utils import merge_hparams
-        config = mmcv.Config.fromfile(args.configs)
+        from utils.params_utils import load_config_file, merge_hparams
+        config = load_config_file(args.configs)
         args = merge_hparams(args, config)
     # Initialize system state (RNG)
     safe_state(args.quiet)

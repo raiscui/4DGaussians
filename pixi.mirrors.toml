@@ -1,0 +1,48 @@
+# Pixi 镜像配置(可选).
+#
+# 背景:
+# - 有些网络环境下,`conda.anaconda.org` 可能出现 DNS 无法解析(Name does not resolve),
+#   导致 `pixi install` 无法下载 repodata.
+# - Pixi 支持在项目本地配置文件里定义 conda channel 镜像,把 channel 重定向到可用镜像站.
+#
+# 用法:
+# - 把本文件写入 Pixi 的项目本地配置: `.pixi/config.toml`
+#   - `mkdir -p .pixi`
+#   - `cp -f pixi.mirrors.toml .pixi/config.toml`
+#   - `pixi install`
+# - notebook 已做兼容: 先尝试 `pixi install`,失败后会自动写入 `.pixi/config.toml` 再重试.
+#
+# 注意:
+# - 镜像应当是上游 channel 的完整镜像(至少保证 repodata 与包内容一致),
+#   否则会影响可复现性或引入 hash 不匹配风险.
+
+[mirrors]
+
+# conda-forge
+"https://conda.anaconda.org/conda-forge" = [
+  # 中国大陆常用镜像
+  "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge",
+  "https://mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge",
+  "https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge",
+  "https://mirrors.aliyun.com/anaconda/cloud/conda-forge",
+  # 保留官方作为最后兜底(若 DNS/网络可用)
+  "https://conda.anaconda.org/conda-forge",
+]
+
+# pytorch
+"https://conda.anaconda.org/pytorch" = [
+  "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/pytorch",
+  "https://mirrors.bfsu.edu.cn/anaconda/cloud/pytorch",
+  "https://mirrors.ustc.edu.cn/anaconda/cloud/pytorch",
+  "https://mirrors.aliyun.com/anaconda/cloud/pytorch",
+  "https://conda.anaconda.org/pytorch",
+]
+
+# nvidia
+"https://conda.anaconda.org/nvidia" = [
+  "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/nvidia",
+  "https://mirrors.bfsu.edu.cn/anaconda/cloud/nvidia",
+  "https://mirrors.ustc.edu.cn/anaconda/cloud/nvidia",
+  "https://mirrors.aliyun.com/anaconda/cloud/nvidia",
+  "https://conda.anaconda.org/nvidia",
+]
