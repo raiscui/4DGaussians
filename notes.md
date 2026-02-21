@@ -255,3 +255,22 @@ FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
   它的输出 mp4(`traj_4d_step29999.mp4`)显示为 `528x944`,主要是对齐到 16 的倍数.
 - 因此本仓库 README 里 bar-release 的示例命令,已把 `--max-size` 从 960 更正为 940.
 - `--max-size 960` 更适合标准 4K(3840 长边)按 1/4 下采样的场景.
+
+## 2026-02-21T12:24:13+00:00 笔记: 对齐 FreeTimeGsVanilla 的 data_factor 语义(训练侧下采样)
+
+### 关键事实(来自 FreeTimeGsVanilla 代码与产物)
+
+- FreeTime 的 `data_factor` 是训练/加载侧下采样:
+  - `datasets/FreeTime_dataset.py` 会把 `K[:2, :] /= factor`,并在 `__getitem__` 里用:
+    - `cv2.resize(..., dsize=(W // factor, H // factor))`
+  - 也就是说它用的是 floor 下采样,并同步缩放 intrinsics,确保 FOV 语义不变.
+- 数据落盘仍保留原始帧分辨率:
+  - 例如 `results/bar_release_full/out_0_61/cfg.yml` 里 `data_factor: 4`,
+    但 `work_0_61/data/images/*/*.jpg` 仍是 `2110x3760`.
+
+### 对本仓库 MultipleView 的含义
+
+- 如果我们在生成阶段用 `--max-size` 把帧缩小,会发生不可逆降质,不利于公平评估对比.
+- 更合理的对齐方式是:
+  1) 生成阶段 `--max-size 0` 保留原始帧质量.
+  2) 训练阶段使用 `--resolution 4/8` 做等价 `data_factor` 的下采样(只影响加载进训练的尺寸与 focal).

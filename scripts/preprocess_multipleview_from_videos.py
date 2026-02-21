@@ -89,12 +89,35 @@ def _ffmpeg_scale_filter(max_size: int) -> str:
     )
 
 
+def _ffmpeg_select_filter(frame_start: int, frame_end: int | None, frame_step: int) -> str:
+    """
+    生成 ffmpeg select 表达式,按"帧索引"抽取,更贴近 FreeTime 的 [start_frame,end_frame) 语义.
+
+    说明:
+    - n 是解码后的帧序号(从 0 开始).
+    - 这里用 gte/lt/mod 组合,并对表达式里的逗号做 `\\,` 转义,避免被 filtergraph 解析成分隔符.
+    """
+    if frame_step <= 0:
+        raise ValueError(f"frame_step 必须 >= 1,当前为: {frame_step}")
+
+    expr = f"gte(n\\,{frame_start})"
+    if frame_end is not None:
+        expr += f"*lt(n\\,{frame_end})"
+    if frame_step != 1:
+        expr += f"*not(mod(n-{frame_start}\\,{frame_step}))"
+
+    return f"select='{expr}'"
+
+
 def _extract_frames_one_video(
     video_path: Path,
     cam_dir: Path,
     fps: int | None,
     max_size: int | None,
     max_frames: int | None,
+    frame_start: int | None,
+    frame_end: int | None,
+    frame_step: int,
     jpg_quality: int,
     overwrite: bool,
 ) -> None:
@@ -102,9 +125,10 @@ def _extract_frames_one_video(
     使用 ffmpeg 抽帧到 cam_dir/frame_%05d.jpg.
 
     参数选择逻辑:
-    - fps: 默认 None 表示按原视频时间戳导出全部帧(通常会非常多).
-    - max_size: 可选缩放,用于控制 COLMAP/训练的开销.
-    - max_frames: 可选上限,用于快速试跑或强制对齐.
+    - 若提供 frame_start/frame_end/frame_step(任意一个),则按帧索引抽取(更贴近 FreeTime).
+    - 否则按 fps 重采样抽帧.
+    - max_size: 可选缩放,用于控制落盘分辨率(注意会不可逆降质).
+    - max_frames: 可选上限,用于快速试跑或强制对齐(限制输出帧数).
     """
     _ensure_dir(cam_dir)
 
@@ -115,8 +139,14 @@ def _extract_frames_one_video(
     out_pattern = str(cam_dir / "frame_%05d.jpg")
 
     vf_parts: list[str] = []
-    if fps is not None:
-        vf_parts.append(f"fps={fps}")
+    use_frame_range = frame_start is not None or frame_end is not None or frame_step != 1
+    if use_frame_range:
+        start = 0 if frame_start is None else int(frame_start)
+        end = None if frame_end is None else int(frame_end)
+        vf_parts.append(_ffmpeg_select_filter(start, end, int(frame_step)))
+    else:
+        if fps is not None:
+            vf_parts.append(f"fps={fps}")
     if max_size is not None:
         vf_parts.append(_ffmpeg_scale_filter(max_size))
     vf = ",".join(vf_parts) if vf_parts else None
@@ -124,6 +154,9 @@ def _extract_frames_one_video(
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(video_path)]
     if vf is not None:
         cmd += ["-vf", vf]
+    if use_frame_range:
+        # 避免基于时间戳的补帧/重复,确保输出序列严格是 select 选出的帧.
+        cmd += ["-vsync", "0"]
     if max_frames is not None:
         cmd += ["-frames:v", str(max_frames)]
     cmd += ["-q:v", str(jpg_quality), "-start_number", "1", out_pattern]
@@ -363,6 +396,9 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=10, help="抽帧帧率(默认 10).设为 0 表示导出全部帧(通常非常大)")
     parser.add_argument("--max-size", type=int, default=1920, help="抽帧时最长边缩放上限(默认 1920).设为 0 表示不缩放")
     parser.add_argument("--max-frames", type=int, default=0, help="每路视频最多抽取多少帧(0 表示不限制)")
+    parser.add_argument("--frame-start", type=int, default=0, help="按帧索引抽取: 起始帧(包含,0-based).用于对齐 FreeTime 的 start_frame")
+    parser.add_argument("--frame-end", type=int, default=0, help="按帧索引抽取: 结束帧(不包含,0-based).0 表示不限制.用于对齐 FreeTime 的 end_frame")
+    parser.add_argument("--frame-step", type=int, default=1, help="按帧索引抽取: 步长(默认 1).用于对齐 FreeTime 的 frame_step")
     parser.add_argument("--jpg-quality", type=int, default=2, help="ffmpeg JPG 输出质量(1-31,越小越好,默认 2)")
     parser.add_argument("--overwrite", action="store_true", help="若目标 camXX 已存在帧,允许覆盖重抽")
     parser.add_argument("--limit-cams", type=int, default=0, help="只处理前 N 路视频(用于快速验证,0 表示全处理)")
@@ -394,6 +430,22 @@ def main() -> None:
     max_size = None if args.max_size == 0 else int(args.max_size)
     max_frames = None if args.max_frames == 0 else int(args.max_frames)
 
+    # frame range 模式:
+    # - frame_end=0 表示不限制(通常不建议,可能会导出非常多帧).
+    # - 只要 frame_start/frame_end/frame_step 任意一个不是默认值,就启用该模式,并忽略 fps 的语义.
+    use_frame_range = (int(args.frame_start) != 0) or (int(args.frame_end) != 0) or (int(args.frame_step) != 1)
+    frame_start = None
+    frame_end = None
+    frame_step = 1
+    if use_frame_range:
+        frame_start = max(0, int(args.frame_start))
+        frame_end = None if int(args.frame_end) == 0 else int(args.frame_end)
+        frame_step = int(args.frame_step)
+        if frame_step <= 0:
+            raise ValueError(f"--frame-step 必须 >= 1,当前为: {frame_step}")
+        if frame_end is not None and frame_end <= frame_start:
+            raise ValueError(f"--frame-end 必须 > --frame-start. 当前为: start={frame_start}, end={frame_end}")
+
     dataset_dir = Path(args.data_root).resolve() / args.dataset_name
     print(f"[info] 输出数据集目录: {dataset_dir}")
     _ensure_dir(dataset_dir)
@@ -410,6 +462,9 @@ def main() -> None:
             fps=fps,
             max_size=max_size,
             max_frames=max_frames,
+            frame_start=frame_start,
+            frame_end=frame_end,
+            frame_step=frame_step,
             jpg_quality=int(args.jpg_quality),
             overwrite=bool(args.overwrite),
         )

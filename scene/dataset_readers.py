@@ -593,15 +593,38 @@ def readPanopticSportsinfos(datadir):
                            )
     return scene_info
 
-def readMultipleViewinfos(datadir,llffhold=8):
+def readMultipleViewinfos(datadir, llffhold=8, resolution=-1):
 
     cameras_extrinsic_file = os.path.join(datadir, "sparse_/images.bin")
     cameras_intrinsic_file = os.path.join(datadir, "sparse_/cameras.bin")
     cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
     cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     from scene.multipleview_dataset import multipleview_dataset
-    train_cam_infos = multipleview_dataset(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, cam_folder=datadir,split="train")
-    test_cam_infos = multipleview_dataset(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, cam_folder=datadir,split="test")
+
+    # MultipleView 的 downsample 语义:
+    # - resolution <= 0: 使用落盘原分辨率.
+    # - resolution > 0: 训练侧按 factor 下采样,等价 FreeTimeGsVanilla 的 data_factor.
+    downsample_factor = 1
+    try:
+        if resolution is not None and int(resolution) > 0:
+            downsample_factor = int(resolution)
+    except Exception:
+        downsample_factor = 1
+
+    train_cam_infos = multipleview_dataset(
+        cam_extrinsics=cam_extrinsics,
+        cam_intrinsics=cam_intrinsics,
+        cam_folder=datadir,
+        split="train",
+        downsample_factor=downsample_factor,
+    )
+    test_cam_infos = multipleview_dataset(
+        cam_extrinsics=cam_extrinsics,
+        cam_intrinsics=cam_intrinsics,
+        cam_folder=datadir,
+        split="test",
+        downsample_factor=downsample_factor,
+    )
 
     train_cam_infos_ = format_infos(train_cam_infos,"train")
     nerf_normalization = getNerfppNorm(train_cam_infos_)

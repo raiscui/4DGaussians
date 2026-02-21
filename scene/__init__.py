@@ -59,7 +59,9 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["PanopticSports"](args.source_path)
             dataset_type="PanopticSports"
         elif os.path.exists(os.path.join(args.source_path,"points3D_multipleview.ply")):
-            scene_info = sceneLoadTypeCallbacks["MultipleView"](args.source_path)
+            # MultipleView: 支持用 `--resolution` 在训练侧做等价 data_factor 的下采样,
+            # 用于与 FreeTimeGsVanilla 等 pipeline 做公平评估对比.
+            scene_info = sceneLoadTypeCallbacks["MultipleView"](args.source_path, args.llffhold, args.resolution)
             dataset_type="MultipleView"
         else:
             assert False, "Could not recognize scene type!"

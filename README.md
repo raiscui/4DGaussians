@@ -206,6 +206,25 @@ pixi run prep-multipleview \
   --max-size 940
 ```
 
+#### Fair comparison with FreeTimeGsVanilla (recommended for metrics)
+
+FreeTimeGsVanilla 的 `data_factor` 是"训练侧下采样",并不会把落盘帧文件缩小.
+为了保证输入数据质量对等,建议:
+
+1. 生成阶段保留原始分辨率: `--max-size 0`
+2. 用 `--frame-start/--frame-end` 精确对齐帧段语义(例如 `[0,61)`).
+3. 训练阶段再用 `train.py --resolution 4/8` 做等价 data_factor 下采样.
+
+```bash
+pixi run prep-multipleview \
+  --videos-dir /cloud/cloud-s3fs/SelfCap/bar-release/videos \
+  --dataset-name bar-release_fullres_0_61 \
+  --frame-start 0 \
+  --frame-end 61 \
+  --frame-step 1 \
+  --max-size 0
+```
+
 #### Important flags
 
 - `--videos-dir`: 输入视频目录.脚本会按文件名排序,并映射为 `cam01`, `cam02`, ...
@@ -213,9 +232,15 @@ pixi run prep-multipleview \
 - `--fps`: 抽帧帧率.默认 `10`.
   - `--fps 60` + `--max-frames 61` 等价于取前 61 帧(约 1 秒@60fps),体量接近很多 demo pipeline.
   - `--fps 1` 更适合长视频做"低频采样"(例如 1fps 覆盖 60 秒).
+- `--frame-start/--frame-end/--frame-step`: 按"帧索引"抽取,更贴近 FreeTimeGsVanilla 的语义.
+  - 帧索引是 0-based.
+  - 当你设置了这些参数之一时,脚本会启用 frame range 模式,并忽略 `--fps` 的重采样语义.
+  - 例: `--frame-start 0 --frame-end 61 --frame-step 1` 等价于取 `[0,61)` 连续 61 帧.
 - `--max-size`: 抽帧时对图片做缩放,控制最长边(保持比例).默认 `1920`.
-  - 对 4K 级别视频,建议 `--max-size 960`(约等价于 1/4)或更小.
-  - 本文示例的 bar-release 竖屏视频最长边约 3760,按 1/4 对齐时更接近 `--max-size 940`.
+  - 重要: 这是"生成阶段"的不可逆缩放,会损失输入质量.
+  - 若你关心最终模型评估对比的公平性,建议 `--max-size 0` 保留原始帧,
+    并在训练时用 `train.py --resolution 4/8` 做等价 data_factor 的"训练侧下采样".
+  - 若只是想快速预览/试跑,再考虑用 `--max-size 940`(bar-release 约 1/4)之类的值降低开销.
 - `--max-frames`: 每路相机最多抽多少帧(0 表示不限制).
 - `--pointcloud`: 点云来源:
   - `sparse`(默认): 直接用 COLMAP sparse 的 points3D,速度快.
@@ -263,6 +288,13 @@ python train.py -s  data/hypernerf/virg/broom2/ --port 6017 --expname "hypernerf
 For training multipleviews scenes,you are supposed to build a configuration file named (you dataset name).py under "./arguments/mutipleview",after that,run
 ```python
 python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(you dataset name).py 
+```
+
+MultipleView 的训练侧下采样(用于对齐 FreeTimeGsVanilla 的 `data_factor`)可以直接用 `--resolution`:
+
+```python
+# 等价 data_factor=4: 训练侧把图像与 focal 都按 4x 下采样(落盘原图不变)
+python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(you dataset name).py --resolution 4
 ```
 
 

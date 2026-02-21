@@ -15,14 +15,40 @@ class multipleview_dataset(Dataset):
         cam_extrinsics,
         cam_intrinsics,
         cam_folder,
-        split
+        split,
+        downsample_factor: int = 1,
     ):
-        self.focal = [cam_intrinsics[1].params[0], cam_intrinsics[1].params[0]]
-        height=cam_intrinsics[1].height
-        width=cam_intrinsics[1].width
+        # MultipleView 的公平对比诉求:
+        # - 数据生成阶段尽量保留原始帧(不做不可逆缩放).
+        # - 训练/加载阶段再做下采样,语义上等价 FreeTimeGsVanilla 的 data_factor.
+        self.downsample_factor = max(1, int(downsample_factor))
+
+        # MultipleView 默认 single_camera,但为了更健壮这里取第一个内参作为全局 intrinsics.
+        first_cam_id = sorted(cam_intrinsics.keys())[0]
+        base_cam = cam_intrinsics[first_cam_id]
+
+        base_focal = float(base_cam.params[0])
+        base_height = int(base_cam.height)
+        base_width = int(base_cam.width)
+
+        # 与 FreeTime 一致: floor 下采样,并同步缩放 focal(像素单位),保证 FOV 不变.
+        height = max(1, base_height // self.downsample_factor)
+        width = max(1, base_width // self.downsample_factor)
+        focal = base_focal / float(self.downsample_factor)
+
+        self.focal = [focal, focal]
         self.FovY = focal2fov(self.focal[0], height)
         self.FovX = focal2fov(self.focal[0], width)
-        self.transform = T.ToTensor()
+
+        if self.downsample_factor > 1:
+            self.transform = T.Compose(
+                [
+                    T.Resize((height, width), interpolation=T.InterpolationMode.BILINEAR),
+                    T.ToTensor(),
+                ]
+            )
+        else:
+            self.transform = T.ToTensor()
         self.image_paths, self.image_poses, self.image_times= self.load_images_path(cam_folder, cam_extrinsics,cam_intrinsics,split)
         if split=="test":
             self.video_cam_infos=self.get_video_cam_infos(cam_folder)
