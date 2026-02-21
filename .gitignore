@@ -8,5 +8,8 @@ tensorboard_3d
 screenshots
 data/
 data
+data.zip
 submodules/
 .pixi/
+.direnv/
+.envrc.private

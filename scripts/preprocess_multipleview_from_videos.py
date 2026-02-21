@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -51,7 +52,30 @@ def _run_cmd(cmd: list[str], cwd: Path | None = None) -> None:
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"命令失败(returncode={proc.returncode}): {cmd_str}\n\n{proc.stdout}")
+        # 负 returncode 表示被信号终止(例如 -9 => SIGKILL).
+        # 这类问题经常是 OOM killer 或外部强杀导致,需要把信息提示清楚.
+        extra_hint = ""
+        if proc.returncode < 0:
+            sig_num = -int(proc.returncode)
+            try:
+                sig_name = signal.Signals(sig_num).name
+            except ValueError:
+                sig_name = f"SIG{sig_num}"
+
+            extra_hint = f"\n[hint] 进程被信号终止: {sig_name}({sig_num}).\n"
+            if sig_num == int(signal.SIGKILL) and len(cmd) >= 2 and cmd[0] == "colmap":
+                # SIGKILL 基本无法由进程自行捕获,所以更可能是系统层面的强杀.
+                # 最常见的是内存不够触发 OOM killer.
+                extra_hint += (
+                    "[hint] SIGKILL 常见原因是 OOM(内存不足)导致系统直接杀死进程.\n"
+                    "[hint] 若你在跑 `colmap feature_extractor`,可以尝试降低 SIFT 开销:\n"
+                    "       - 下调 `--colmap-sift-max-image-size`(例如 2000/1600)\n"
+                    "       - 下调 `--colmap-sift-max-num-features`(例如 4096)\n"
+                    "       - 下调 `--colmap-num-threads`(例如 1 或 2)\n"
+                    "       - 关闭 affine/dsp(本脚本默认已关闭)\n"
+                )
+
+        raise RuntimeError(f"命令失败(returncode={proc.returncode}): {cmd_str}{extra_hint}\n{proc.stdout}")
 
 
 def _list_videos(videos_dir: Path) -> list[Path]:
@@ -171,6 +195,15 @@ def _copy_sparse_model(src_sparse0: Path, dst_sparse_: Path) -> None:
     for p in src_sparse0.iterdir():
         if p.is_file():
             shutil.copy2(p, dst_sparse_ / p.name)
+
+
+def _keep_colmap_tmp_dir(colmap_dir: Path, dataset_dir: Path) -> None:
+    """把 COLMAP 临时目录复制到数据集目录下,用于排查失败原因."""
+    keep_dir = dataset_dir / "_colmap_tmp"
+    if keep_dir.exists():
+        shutil.rmtree(keep_dir)
+    shutil.copytree(colmap_dir, keep_dir)
+    print(f"[info] 已保留 COLMAP 临时目录到: {keep_dir}")
 
 
 # -----------------------------------------------------------------------------
@@ -412,7 +445,44 @@ def main() -> None:
     )
     parser.add_argument("--keep-colmap-tmp", action="store_true", help="保留 COLMAP 临时目录,便于排查")
 
+    # COLMAP 参数:
+    # - 脚本默认只用每路相机的首帧做静态标定,通常不需要把 SIFT 参数拉得很激进.
+    # - 在高分辨率(接近 4K) + 小内存的环境里,过高的 max_image_size/max_num_features + 多线程
+    #   很容易触发 OOM killer,表现为 returncode=-9(SIGKILL).
+    default_colmap_threads = min(4, os.cpu_count() or 4)
+    parser.add_argument(
+        "--colmap-num-threads",
+        type=int,
+        default=default_colmap_threads,
+        help=(
+            "COLMAP 线程数(同时用于 SiftExtraction.num_threads 与 SiftMatching.num_threads). "
+            f"默认 {default_colmap_threads}. 设为 -1 表示让 COLMAP 自动(可能更快但更吃内存)"
+        ),
+    )
+    parser.add_argument(
+        "--colmap-sift-max-image-size",
+        type=int,
+        default=3200,
+        help="COLMAP SIFT 特征提取最大边长(默认 3200,更省内存).例如 2000/1600 会更稳",
+    )
+    parser.add_argument(
+        "--colmap-sift-max-num-features",
+        type=int,
+        default=8192,
+        help="COLMAP SIFT 每张图最多特征点数(默认 8192).例如 4096 会更稳",
+    )
+    parser.add_argument("--colmap-sift-affine", action="store_true", help="启用 affine shape estimation(更慢更吃内存)")
+    parser.add_argument("--colmap-sift-dsp", action="store_true", help="启用 domain size pooling(DSP)(更慢更吃内存)")
+
     args = parser.parse_args()
+
+    # 参数校验: 尽早失败,避免把无效参数带进 colmap 里产生更难懂的错误.
+    if int(args.colmap_num_threads) == 0 or int(args.colmap_num_threads) < -1:
+        raise ValueError("--colmap-num-threads 只能为 -1(自动) 或 >= 1(显式线程数)")
+    if int(args.colmap_sift_max_image_size) <= 0:
+        raise ValueError("--colmap-sift-max-image-size 必须 >= 1")
+    if int(args.colmap_sift_max_num_features) <= 0:
+        raise ValueError("--colmap-sift-max-num-features 必须 >= 1")
 
     videos_dir = Path(args.videos_dir).resolve()
     if not videos_dir.exists():
@@ -483,100 +553,109 @@ def main() -> None:
     # 3) COLMAP: 只用每路相机第一帧估计内外参.
     with tempfile.TemporaryDirectory(prefix="colmap_multipleview_") as tmp:
         colmap_dir = Path(tmp)
-        images_dir = colmap_dir / "images"
-        _ensure_dir(images_dir)
+        try:
+            images_dir = colmap_dir / "images"
+            _ensure_dir(images_dir)
 
-        # 把每路相机的第一帧复制为 image1.jpg/image2.jpg...
-        for idx, cam_dir in enumerate(sorted(cam_dirs), start=1):
-            src = cam_dir / "frame_00001.jpg"
-            if not src.exists():
-                raise RuntimeError(f"缺少首帧: {src}")
-            dst = images_dir / f"image{idx}.jpg"
-            shutil.copy2(src, dst)
+            # 把每路相机的第一帧复制为 image1.jpg/image2.jpg...
+            for idx, cam_dir in enumerate(sorted(cam_dirs), start=1):
+                src = cam_dir / "frame_00001.jpg"
+                if not src.exists():
+                    raise RuntimeError(f"缺少首帧: {src}")
+                dst = images_dir / f"image{idx}.jpg"
+                shutil.copy2(src, dst)
 
-        db_path = colmap_dir / "database.db"
-        sparse_dir = colmap_dir / "sparse"
-        _ensure_dir(sparse_dir)
+            db_path = colmap_dir / "database.db"
+            sparse_dir = colmap_dir / "sparse"
+            _ensure_dir(sparse_dir)
 
-        # feature_extractor: 强制 single_camera,与 multipleview_dataset 的假设一致.
-        _run_cmd(
-            [
-                "colmap",
-                "feature_extractor",
-                "--database_path",
-                str(db_path),
-                "--image_path",
-                str(images_dir),
-                "--ImageReader.single_camera",
-                "1",
-                "--ImageReader.camera_model",
-                "SIMPLE_PINHOLE",
-                # 在无 GPU/无 OpenGL 的 headless 环境里,强制使用 CPU SIFT.
-                "--SiftExtraction.use_gpu",
-                "0",
-                "--SiftExtraction.max_image_size",
-                "4096",
-                "--SiftExtraction.max_num_features",
-                "16384",
-                "--SiftExtraction.estimate_affine_shape",
-                "1",
-                "--SiftExtraction.domain_size_pooling",
-                "1",
-            ]
-        )
-        _run_cmd(
-            [
-                "colmap",
-                "exhaustive_matcher",
-                "--database_path",
-                str(db_path),
-                # 同上,禁用 GPU 匹配.
-                "--SiftMatching.use_gpu",
-                "0",
-            ]
-        )
-        _run_cmd(
-            [
-                "colmap",
-                "mapper",
-                "--database_path",
-                str(db_path),
-                "--image_path",
-                str(images_dir),
-                "--output_path",
-                str(sparse_dir),
-            ]
-        )
+            # feature_extractor: 强制 single_camera,与 multipleview_dataset 的假设一致.
+            _run_cmd(
+                [
+                    "colmap",
+                    "feature_extractor",
+                    "--database_path",
+                    str(db_path),
+                    "--image_path",
+                    str(images_dir),
+                    "--ImageReader.single_camera",
+                    "1",
+                    "--ImageReader.camera_model",
+                    "SIMPLE_PINHOLE",
+                    # 在无 GPU/无 OpenGL 的 headless 环境里,强制使用 CPU SIFT.
+                    "--SiftExtraction.use_gpu",
+                    "0",
+                    "--SiftExtraction.num_threads",
+                    str(int(args.colmap_num_threads)),
+                    "--SiftExtraction.max_image_size",
+                    str(int(args.colmap_sift_max_image_size)),
+                    "--SiftExtraction.max_num_features",
+                    str(int(args.colmap_sift_max_num_features)),
+                    "--SiftExtraction.estimate_affine_shape",
+                    "1" if bool(args.colmap_sift_affine) else "0",
+                    "--SiftExtraction.domain_size_pooling",
+                    "1" if bool(args.colmap_sift_dsp) else "0",
+                ]
+            )
+            _run_cmd(
+                [
+                    "colmap",
+                    "exhaustive_matcher",
+                    "--database_path",
+                    str(db_path),
+                    # 同上,禁用 GPU 匹配.
+                    "--SiftMatching.use_gpu",
+                    "0",
+                    "--SiftMatching.num_threads",
+                    str(int(args.colmap_num_threads)),
+                ]
+            )
+            _run_cmd(
+                [
+                    "colmap",
+                    "mapper",
+                    "--database_path",
+                    str(db_path),
+                    "--image_path",
+                    str(images_dir),
+                    "--output_path",
+                    str(sparse_dir),
+                ]
+            )
 
-        sparse0 = sparse_dir / "0"
-        if not sparse0.exists():
-            raise RuntimeError("COLMAP mapper 没有生成 sparse/0,请检查匹配是否成功.")
+            sparse0 = sparse_dir / "0"
+            if not sparse0.exists():
+                raise RuntimeError("COLMAP mapper 没有生成 sparse/0,请检查匹配是否成功.")
 
-        # 4) 拷贝 sparse_ 到数据集.
-        dst_sparse_ = dataset_dir / "sparse_"
-        _copy_sparse_model(sparse0, dst_sparse_)
+            # 4) 拷贝 sparse_ 到数据集.
+            dst_sparse_ = dataset_dir / "sparse_"
+            _copy_sparse_model(sparse0, dst_sparse_)
 
-        # 5) 生成 poses_bounds_multipleview.npy
-        poses_out = dataset_dir / "poses_bounds_multipleview.npy"
-        _compute_poses_bounds_from_colmap(colmap_dir, poses_out)
+            # 5) 生成 poses_bounds_multipleview.npy
+            poses_out = dataset_dir / "poses_bounds_multipleview.npy"
+            _compute_poses_bounds_from_colmap(colmap_dir, poses_out)
 
-        # 6) 生成点云
-        ply_out = dataset_dir / "points3D_multipleview.ply"
-        if args.pointcloud == "dense":
-            try:
-                _make_pointcloud_from_dense(colmap_dir, ply_out, keep_intermediate=bool(args.keep_colmap_tmp))
-            except Exception as e:
-                print(f"[warn] dense 点云生成失败,将回退到 sparse 点云. error={e}")
+            # 6) 生成点云
+            ply_out = dataset_dir / "points3D_multipleview.ply"
+            if args.pointcloud == "dense":
+                try:
+                    _make_pointcloud_from_dense(colmap_dir, ply_out, keep_intermediate=bool(args.keep_colmap_tmp))
+                except Exception as e:
+                    print(f"[warn] dense 点云生成失败,将回退到 sparse 点云. error={e}")
+                    _make_pointcloud_from_sparse(colmap_dir, ply_out)
+            else:
                 _make_pointcloud_from_sparse(colmap_dir, ply_out)
+        except Exception:
+            # 即使失败也尽量保留现场,否则 TemporaryDirectory 会在异常回溯时自动清理,很难排障.
+            if args.keep_colmap_tmp:
+                try:
+                    _keep_colmap_tmp_dir(colmap_dir, dataset_dir)
+                except Exception as e:
+                    print(f"[warn] 保留 COLMAP 临时目录失败: {e}")
+            raise
         else:
-            _make_pointcloud_from_sparse(colmap_dir, ply_out)
-
-        if args.keep_colmap_tmp:
-            keep_dir = dataset_dir / "_colmap_tmp"
-            if keep_dir.exists():
-                shutil.rmtree(keep_dir)
-            shutil.copytree(colmap_dir, keep_dir)
-            print(f"[info] 已保留 COLMAP 临时目录到: {keep_dir}")
+            if args.keep_colmap_tmp:
+                _keep_colmap_tmp_dir(colmap_dir, dataset_dir)
 
     print("[done] MultipleView 数据集生成完成.")
     print(f"[done] dataset_dir: {dataset_dir}")

@@ -103,3 +103,26 @@
 - `README.md` 的 "Fair comparison with FreeTimeGsVanilla" 小节补充了训练命令示例:
   - `pixi run prep-multipleview ... --dataset-name bar-release_fullres_0_61 ... --max-size 0`
   - `pixi run train -s data/multipleview/bar-release_fullres_0_61 --configs arguments/multipleview/xxx.py --resolution 4`
+
+## 2026-02-21T13:43:41+00:00 追加: COLMAP feature_extractor 被 SIGKILL(-9) 的稳态修复
+
+- 问题现象: 运行 `scripts/preprocess_multipleview_from_videos.py` 时,`colmap feature_extractor` 返回 `-9`(SIGKILL),脚本报 `RuntimeError: returncode=-9`.
+- 修复与改良:
+  - `scripts/preprocess_multipleview_from_videos.py` 暴露 COLMAP 关键 SIFT 参数与线程数为 CLI 参数:
+    - `--colmap-num-threads`
+    - `--colmap-sift-max-image-size`
+    - `--colmap-sift-max-num-features`
+    - `--colmap-sift-affine` / `--colmap-sift-dsp`
+  - 默认值回归到更接近 COLMAP 默认(更省内存),并默认关闭 affine/dsp.
+  - `_run_cmd()` 在检测到信号终止(负 returncode,尤其 SIGKILL)时,给出更明确的 OOM 调参提示.
+  - `--keep-colmap-tmp` 行为增强: 即使 COLMAP 中途失败也会尽量把临时目录拷到 `data/multipleview/<dataset>/_colmap_tmp/`,方便排查.
+- 文档同步:
+  - `README.md` 的 MultipleView 生成参数说明补充了上述 COLMAP 调参开关与 OOM 建议.
+
+## 2026-02-21T17:04:40+00:00 追加: 准备提交并推送到 `raiscui/4DGaussians`
+
+- 推送目标: `https://github.com/raiscui/4DGaussians.git`
+- 卫生检查:
+  - `data.zip` 为本地大文件,将加入 `.gitignore`,避免误提交.
+  - `.envrc.private` 已在 `.gitignore` 中忽略,不会被提交.
+  - `.envrc` 仅做环境变量引用与开发辅助配置,不包含 token 实值,计划纳入提交.

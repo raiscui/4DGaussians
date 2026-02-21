@@ -181,3 +181,42 @@
 预期:
 
 - COLMAP 不再崩溃,能生成 `sparse_/` 与 `poses_bounds_multipleview.npy`.
+
+## 2026-02-21T13:43:41+00:00
+
+### 问题: `colmap feature_extractor` 被 SIGKILL(-9) 强杀
+
+在执行:
+
+- `scripts/preprocess_multipleview_from_videos.py`
+
+的 COLMAP 阶段时失败,报错摘要类似:
+
+- `RuntimeError: 命令失败(returncode=-9): colmap feature_extractor ...`
+
+### 原因
+
+- `returncode=-9` 表示进程被 `SIGKILL` 终止.
+  - 最常见原因是系统/容器 OOM killer(内存不足)直接杀死进程.
+- 脚本原先硬编码了一组比 COLMAP 默认更激进的 SIFT 参数,会显著放大内存峰值:
+  - `max_image_size=4096`
+  - `max_num_features=16384`
+  - 开启 affine/dsp
+- 同时未限制 COLMAP 线程数,默认 `num_threads=-1` 会吃满 CPU 核数,进一步放大峰值内存.
+
+### 修复
+
+- `scripts/preprocess_multipleview_from_videos.py` 增加 COLMAP 调参开关,并把默认值调整为更省内存:
+  - `--colmap-num-threads`(默认 4)
+  - `--colmap-sift-max-image-size`(默认 3200)
+  - `--colmap-sift-max-num-features`(默认 8192)
+  - `--colmap-sift-affine` / `--colmap-sift-dsp`(默认关闭)
+- `_run_cmd()` 在遇到负 returncode(信号终止)时输出更明确的提示;遇到 SIGKILL 会提示 OOM 并给出降参建议.
+- `--keep-colmap-tmp` 行为增强: 即使中途失败也会尽量保留 `_colmap_tmp`,便于排查.
+
+### 验证
+
+1. 帮助信息包含新增参数:
+   - `python3 scripts/preprocess_multipleview_from_videos.py --help`
+2. 若仍遇到 `returncode=-9`,优先尝试更保守参数:
+   - `--colmap-num-threads 1 --colmap-sift-max-image-size 1600 --colmap-sift-max-num-features 4096`

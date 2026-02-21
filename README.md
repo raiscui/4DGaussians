@@ -255,7 +255,11 @@ pixi run train \
   - `sparse`(默认): 直接用 COLMAP sparse 的 points3D,速度快.
   - `dense`: 走 COLMAP MVS 生成 fused.ply,再下采样,更慢但更密.
 - `--overwrite`: 允许覆盖已存在的 `camXX/frame_*.jpg`.
-- `--keep-colmap-tmp`: 保留中间 COLMAP 工作目录到 `data/multipleview/<dataset>/_colmap_tmp/` 便于排查.
+- `--keep-colmap-tmp`: 保留中间 COLMAP 工作目录到 `data/multipleview/<dataset>/_colmap_tmp/` 便于排查(即使中途失败也会尽量保留).
+- `--colmap-num-threads`: COLMAP 线程数(同时用于特征提取与匹配).小内存机器建议设小一些,例如 `--colmap-num-threads 1`.
+- `--colmap-sift-max-image-size`: SIFT 特征提取的最大边长(默认 3200).如果你的视频接近 4K 且遇到 OOM,可以先试 `--colmap-sift-max-image-size 2000` 或 `1600`.
+- `--colmap-sift-max-num-features`: 每张图最多特征点数(默认 8192).遇到 OOM 可先试 `--colmap-sift-max-num-features 4096`.
+- `--colmap-sift-affine` / `--colmap-sift-dsp`: 更鲁棒但更慢更吃内存,默认关闭.若你的多机位视角差异很大且匹配困难,再考虑打开.
 
 #### Verify output
 

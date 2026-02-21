@@ -198,6 +198,51 @@ LLFF 的核心做法是:
 
 ### COLMAP 在 headless 环境的两个坑
 
+## 2026-02-21T13:37:57+00:00 追加笔记: COLMAP feature_extractor returncode=-9(SIGKILL) 排查要点
+
+### 现象
+
+`scripts/preprocess_multipleview_from_videos.py` 调用:
+
+- `colmap feature_extractor ...`
+
+失败,Python 侧看到:
+
+- `returncode=-9`
+
+### 初步判断(本质)
+
+- `subprocess` 的负返回码表示"被信号终止".
+- `-9` 对应 `SIGKILL`,常见原因:
+  - 系统/容器内存不足触发 OOM killer.
+  - 外部手动 `kill -9` 或调度器强制终止.
+
+### 关键发现: 脚本里用了比 COLMAP 默认更激进的 SIFT 参数
+
+用 `colmap feature_extractor --help` 可看到默认值(摘关键项):
+
+- `--SiftExtraction.max_image_size (=3200)`
+- `--SiftExtraction.max_num_features (=8192)`
+- `--SiftExtraction.estimate_affine_shape (=0)`
+- `--SiftExtraction.domain_size_pooling (=0)`
+- `--SiftExtraction.num_threads (=-1)`(默认吃满 CPU)
+
+而脚本当前硬编码为:
+
+- `max_image_size=4096`
+- `max_num_features=16384`
+- affine/dsp 都开启
+
+这会显著放大 CPU/内存峰值,在接近 4K 的帧上更容易触发 OOM.
+
+### 结论
+
+优先修复方向:
+
+1. 把 SIFT 参数改回更接近默认值.
+2. 暴露为 CLI 参数,便于用户按机器资源调参.
+3. 当检测到 SIGKILL 时,在异常信息里明确提示"可能是 OOM",并给出降参建议.
+
 这次在容器/无 display 环境里实际跑 COLMAP 时遇到两类崩溃:
 
 1. `qt.qpa.xcb: could not connect to display`
@@ -274,3 +319,11 @@ FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
 - 更合理的对齐方式是:
   1) 生成阶段 `--max-size 0` 保留原始帧质量.
   2) 训练阶段使用 `--resolution 4/8` 做等价 `data_factor` 的下采样(只影响加载进训练的尺寸与 focal).
+
+## 2026-02-21T17:04:40+00:00 笔记: 提交/推送前的本地文件卫生检查
+
+### 结论
+
+- `data.zip` 属于本地大文件产物,不应提交,应加入 `.gitignore`.
+- `.envrc.private` 已被 `.gitignore` 忽略,不会被提交.
+- `.envrc` 本身不包含 GitHub token 的字面量,仅通过环境变量引用,可安全纳入提交,用于 direnv/代理/非交互式 git 等开发辅助配置.
