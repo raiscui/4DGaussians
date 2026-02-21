@@ -78,3 +78,22 @@
 - FreeTimeGsVanilla 的 `cfg.yml` 显示 `data_factor: 4`,而 bar-release 原视频最长边约 3760,
   所以 1/4 下采样更接近 `3760/4=940`,不是 960(960 更像是 3840/4 的标准 4K 情况).
 - 已更新 `README.md` 的 bar-release 示例命令,将 `--max-size` 从 960 更正为 940.
+
+## 2026-02-21T12:35:44+00:00 追加: 为公平评估对比,对齐 FreeTimeGsVanilla 的 data_factor 语义
+
+- MultipleView 训练侧下采样(等价 FreeTime `data_factor`):
+  - `scene/multipleview_dataset.py` 增加 `downsample_factor`,并用 floor 下采样图片,同时把 focal 按相同 factor 缩放,保证 FOV 语义不变.
+  - `scene/dataset_readers.py` 的 `readMultipleViewinfos(..., resolution=...)` 支持把 `resolution` 当作 downsample factor.
+  - `scene/__init__.py` 在 MultipleView 分支把 `args.resolution` 传入,因此 `train.py --resolution 4/8` 对 MultipleView 生效.
+- MultipleView 数据生成按帧索引对齐:
+  - `scripts/preprocess_multipleview_from_videos.py` 增加 `--frame-start/--frame-end/--frame-step`,
+    使用 ffmpeg `select` 精确实现 `[start_frame,end_frame)` 语义,并在该模式下加 `-vsync 0` 避免补帧/重复.
+- 文档同步:
+  - `README.md` 增加 "Fair comparison with FreeTimeGsVanilla" 小节,明确推荐:
+    - 生成阶段 `--max-size 0` 保留原始帧质量.
+    - 训练阶段用 `--resolution 4/8` 做等价 data_factor 的下采样.
+
+- 自检(本地):
+  - `pixi run python -m py_compile scene/multipleview_dataset.py scene/dataset_readers.py scene/__init__.py scripts/preprocess_multipleview_from_videos.py`
+  - `pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release_mv_test'); print('ok', len(s.train_cameras), len(s.test_cameras))"` => `ok 40 6`
+  - `pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release_mv_test', resolution=4); img,_,_=s.train_cameras[0]; print(img.shape)"` => `torch.Size([3, 240, 134])`
