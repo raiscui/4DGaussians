@@ -225,6 +225,15 @@ pixi run prep-multipleview \
   --max-size 0
 ```
 
+然后用 `--resolution 4` 启动训练(等价 `data_factor=4`):
+
+```bash
+pixi run train \
+  -s data/multipleview/bar-release_fullres_0_61 \
+  --configs arguments/multipleview/xxx.py \
+  --resolution 4
+```
+
 #### Important flags
 
 - `--videos-dir`: 输入视频目录.脚本会按文件名排序,并映射为 `cam01`, `cam02`, ...

@@ -97,3 +97,9 @@
   - `pixi run python -m py_compile scene/multipleview_dataset.py scene/dataset_readers.py scene/__init__.py scripts/preprocess_multipleview_from_videos.py`
   - `pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release_mv_test'); print('ok', len(s.train_cameras), len(s.test_cameras))"` => `ok 40 6`
   - `pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release_mv_test', resolution=4); img,_,_=s.train_cameras[0]; print(img.shape)"` => `torch.Size([3, 240, 134])`
+
+## 2026-02-21T13:09:14+00:00 追加: README 记录对比命令(生成 + 训练)
+
+- `README.md` 的 "Fair comparison with FreeTimeGsVanilla" 小节补充了训练命令示例:
+  - `pixi run prep-multipleview ... --dataset-name bar-release_fullres_0_61 ... --max-size 0`
+  - `pixi run train -s data/multipleview/bar-release_fullres_0_61 --configs arguments/multipleview/xxx.py --resolution 4`
