@@ -142,3 +142,42 @@
 验证:
 
 - `pixi run python -c "from simple_knn._C import distCUDA2; print(distCUDA2)"` 运行成功.
+
+## 2026-02-21T09:40:00+00:00
+
+### 问题: COLMAP 在 headless 环境崩溃(无 display / 无 OpenGL context)
+
+在容器或远程机器(没有图形界面)执行 `colmap feature_extractor` / `colmap exhaustive_matcher` 时报错并中止:
+
+1. Qt display 问题:
+   - `qt.qpa.xcb: could not connect to display`
+2. OpenGL context 问题:
+   - `opengl_utils.cc: Check failed: context_.create()`
+
+### 原因
+
+- 部分发行版的 COLMAP CLI 即使走命令行子命令,仍会初始化 Qt 平台插件.
+  没有 display 时会直接 `SIGABRT`.
+- `exhaustive_matcher` 默认可能走 SiftGPU/OpenGL,在无 OpenGL context 的环境里也会 `SIGABRT`.
+
+### 修复
+
+在调用 COLMAP 时强制 headless + CPU 路径:
+
+- 设置环境变量:
+  - `QT_QPA_PLATFORM=offscreen`
+- 显式禁用 GPU:
+  - feature_extractor: `--SiftExtraction.use_gpu 0`
+  - matcher: `--SiftMatching.use_gpu 0`
+
+已在 `scripts/preprocess_multipleview_from_videos.py` 的命令封装中落地.
+
+### 验证
+
+在无 display 的环境里执行:
+
+- `pixi run prep-multipleview --videos-dir /cloud/.../videos --dataset-name bar-release_mv_test --limit-cams 2 --max-frames 20 --pointcloud sparse`
+
+预期:
+
+- COLMAP 不再崩溃,能生成 `sparse_/` 与 `poses_bounds_multipleview.npy`.

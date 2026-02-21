@@ -48,3 +48,16 @@
   - `pixi run python -c "import torch; print(torch.__version__, torch.version.cuda)"`
   - `pixi run install-ext`
   - `pixi run python -c "import diff_gaussian_rasterization; from simple_knn._C import distCUDA2; print('ok')"`
+
+## 2026-02-21T09:40:00+00:00 追加: 从多机位视频生成 MultipleView 数据集
+
+- 新增全流程脚本: `scripts/preprocess_multipleview_from_videos.py`
+  - 输入: 多路视频目录 + dataset name
+  - 输出: `data/multipleview/<dataset>/` 下的 `camXX/frame_*.jpg`, `sparse_`, `points3D_multipleview.ply`, `poses_bounds_multipleview.npy`
+- Pixi task 增加入口: `pixi run prep-multipleview ...`(`pixi.toml:61`)
+- 兼容 headless COLMAP:
+  - 自动设置 `QT_QPA_PLATFORM=offscreen`
+  - 显式禁用 SIFT GPU: `--SiftExtraction.use_gpu 0`, `--SiftMatching.use_gpu 0`
+- 小样本验证通过:
+  - 使用 `/cloud/cloud-s3fs/SelfCap/bar-release/videos` 前 2 路视频生成: `data/multipleview/bar-release_mv_test/`
+  - `readMultipleViewinfos("data/multipleview/bar-release_mv_test")` 可正常读取(2 cams * 20 frames => train 40, test 6)

@@ -148,3 +148,64 @@ README 里也提示要参考 3D-GS 项目的依赖安装,说明 `requirements.tx
 
 - `pixi run python -c "import torch; print(torch.__version__, torch.version.cuda)"`
 - `pixi run python -c "import diff_gaussian_rasterization; from simple_knn._C import distCUDA2; print('ok')"`
+
+## 2026-02-21T08:50:00+00:00 笔记: MultipleView 数据格式与从视频生成的关键点
+
+### MultipleView 的数据格式(本仓库约定)
+
+来源: `README.md` + `scene/multipleview_dataset.py`.
+
+- 输入帧结构:
+  - `data/multipleview/<dataset>/cam01/frame_00001.jpg`
+  - `data/multipleview/<dataset>/cam02/frame_00001.jpg`
+  - ...
+- 训练读取逻辑:
+  - `scene/multipleview_dataset.py` 会用 `cam01` 的帧数作为全局长度,并假设所有相机帧数一致.
+  - 每个相机按 `frame_%05d.jpg` 读取,时间归一化为 `i / image_length`.
+- 派生文件:
+  - `sparse_/cameras.bin` + `sparse_/images.bin`(由 COLMAP 估计相机内外参)
+  - `points3D_multipleview.ply`(初始化点云)
+  - `poses_bounds_multipleview.npy`(用于生成 spiral 渲染相机轨迹)
+
+### 现有脚本链路的问题
+
+- `multipleviewprogress.sh` 假设你已经把每个相机的视频抽成帧并放到 `camXX/frame_*.jpg`.
+- `multipleviewprogress.sh` 还会 `git clone https://github.com/Fyusion/LLFF.git` 并 `pip install scikit-image`,
+  这在离线/受限网络环境下不稳定.
+- `scripts/extractimages.py` 只会取每个相机的第一帧(`frame_00001`)去跑 COLMAP,
+  用于估计多机位的静态相机参数.
+
+### 目标视频目录的初步观察
+
+- 路径: `/cloud/cloud-s3fs/SelfCap/bar-release/videos`
+- 文件: `02.mp4 ... 19.mp4`(共 18 路)
+- 用 `ffprobe` 看 `02.mp4`:
+  - codec: hevc
+  - 分辨率: 2110x3760(竖屏)
+  - 帧率: 60fps
+  - 帧数: 3540(约 59 秒)
+
+### 生成 `poses_bounds_multipleview.npy` 的关键算法(参考 LLFF 逻辑)
+
+LLFF 的核心做法是:
+
+1. 从 COLMAP `cameras.bin/images.bin` 构造 `c2w` pose,并拼上 `[H,W,focal]` 成为 3x5.
+2. 做一次坐标轴重排,从 `[r, -u, t]` 转换到 `[-u, r, -t]`.
+3. 用 `points3D.bin` 的可见性(track)统计每个相机可见点的深度分布,
+   取 0.1% 和 99.9% 分位作为 near/far bounds.
+
+因此我们不需要 `git clone LLFF`,只要在仓库里复刻上述小段逻辑即可.
+
+### COLMAP 在 headless 环境的两个坑
+
+这次在容器/无 display 环境里实际跑 COLMAP 时遇到两类崩溃:
+
+1. `qt.qpa.xcb: could not connect to display`
+   - 解决: 运行 COLMAP 命令前设置环境变量 `QT_QPA_PLATFORM=offscreen`.
+2. `opengl_utils.cc: Check failed: context_.create()`
+   - 这通常是 exhaustive_matcher 默认走 SiftGPU/OpenGL,而 headless 环境无法创建 OpenGL context.
+   - 解决: 对 feature_extractor/matcher 加:
+     - `--SiftExtraction.use_gpu 0`
+     - `--SiftMatching.use_gpu 0`
+
+因此脚本里需要显式设置上述选项,否则会出现 SIGABRT,看起来像 "colmap 自己崩了".

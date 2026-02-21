@@ -58,6 +58,7 @@ pytorch-msssim = "*"
 [tasks]
 # 这些 task 主要用于本地复现,notebook 里也可以直接 `pixi run ...` 执行.
 install-ext = "python -m pip install --no-build-isolation -e submodules/depth-diff-gaussian-rasterization -e submodules/simple-knn"
+prep-multipleview = "python scripts/preprocess_multipleview_from_videos.py"
 train = "python train.py"
 render = "python render.py"
 metrics = "python metrics.py"
