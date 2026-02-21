@@ -126,3 +126,11 @@
   - `data.zip` 为本地大文件,将加入 `.gitignore`,避免误提交.
   - `.envrc.private` 已在 `.gitignore` 中忽略,不会被提交.
   - `.envrc` 仅做环境变量引用与开发辅助配置,不包含 token 实值,计划纳入提交.
+
+## 2026-02-21T17:52:38+00:00 完成: 已提交并推送到 `raiscui/4DGaussians`
+
+- 已将远端 `origin` 设置为 `https://github.com/raiscui/4DGaussians.git`,并 push `master`.
+- 主提交为 `a889dec`(Improve COLMAP preprocessing robustness).
+- `.envrc` 做了安全性收尾:
+  - 明确 `.envrc` 为可提交的公开配置,敏感信息只允许放在 `.envrc.private`(gitignore).
+  - 在检测到 `GITHUB_TOKEN` 时,自动生成 `.direnv/git-askpass.sh` 用于 https 非交互 push(目录已 gitignore).

@@ -327,3 +327,16 @@ FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
 - `data.zip` 属于本地大文件产物,不应提交,应加入 `.gitignore`.
 - `.envrc.private` 已被 `.gitignore` 忽略,不会被提交.
 - `.envrc` 本身不包含 GitHub token 的字面量,仅通过环境变量引用,可安全纳入提交,用于 direnv/代理/非交互式 git 等开发辅助配置.
+
+## 2026-02-21T17:52:38+00:00 补充笔记: 让 `.envrc` 可以安全提交
+
+- `.envrc` 现在明确为可公开提交的 direnv 配置,不再包含"把 PAT 粘贴到这里"这类误导文案.
+- 私密信息只允许写到 `.envrc.private`:
+  - 例如 `export GITHUB_TOKEN=github_pat_xxx`
+  - 该文件已被 `.gitignore` 忽略.
+- 当检测到 `GITHUB_USERNAME/GITHUB_TOKEN` 都存在时,`.envrc` 会自动生成:
+  - `.direnv/git-askpass.sh`
+  用于 `git push` 的 https 非交互认证.
+  `.direnv/` 目录已被 `.gitignore` 忽略,不会进入仓库历史.
+- 代理也改为显式开关:
+  - 只有设置 `USE_LOCAL_PROXY=1` 时才启用本地 7897,避免默认误伤无代理环境.
