@@ -11,3 +11,9 @@
 
 - 已在 `4DGaussians_rais.ipynb` 的首个 cell 提供了基于 `os.environ[...]` 的代理写法(默认注释掉,避免误伤未使用代理的人).
 - 仍未把代理逻辑做成"自动检测/开关式",后续如有需要再继续做成更通用的方案.
+
+## 2026-02-21T10:00:00+00:00
+
+- (候选) `scripts/preprocess_multipleview_from_videos.py` 增加 `--frame-start/--frame-end`(按帧索引抽取,更贴近 FreeTimeGsVanilla 的 `[start_frame, end_frame)` 语义),避免只靠 `--fps` 重采样近似.
+- (候选) 增加 `--strict-frame-count` 开关: 当多路相机帧数不一致时直接报错,而不是自动截断到最短长度(更利于发现数据源问题).
+- (候选) 暴露 COLMAP SIFT 参数为 CLI 选项(例如 max_image_size/max_num_features/num_threads),以便在超高分辨率视频上更稳.
