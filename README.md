@@ -230,9 +230,82 @@ pixi run prep-multipleview \
 ```bash
 pixi run train \
   -s data/multipleview/bar-release_fullres_0_61 \
-  --configs arguments/multipleview/xxx.py \
+  --configs arguments/multipleview/default.py \
   --resolution 4
 ```
+
+说明: 仓库内提供的 MultipleView 基线配置是 `arguments/multipleview/default.py`.
+如果你需要按数据集微调参数,可以复制/继承这个文件生成自己的 `<dataset>.py`,再把 `--configs` 指向它.
+
+#### FAQ: 为什么训练出来的高斯点数只有 12 万左右? 如何增大点数?
+
+很多人会用 `output/point_cloud/iteration_x/point_cloud.ply` 的 vertex 数量来理解"模型里有多少个高斯".
+例如你可能会看到类似 `element vertex 119497`(约 12 万).
+
+这通常不是数据集"限制死"的,而是由训练过程中的 densification/pruning 共同决定:
+
+1. 初始点云通常很小:
+   - MultipleView 默认使用 COLMAP sparse 的 `points3D_multipleview.ply` 作为初始化点云.
+   - 这份点云常见只有几千到几万点,后续主要靠 densification 扩增.
+2. densification 有"时间窗口":
+   - 训练循环里只有在 `iteration < densify_until_iter` 时才会 densify/prune(见 `train.py`).
+   - MultipleView 基线配置 `arguments/multipleview/default.py` 默认 `densify_until_iter=10_000`,
+     因此点数往往在前 10k iter 左右就基本停止增长.
+3. densification 还有"硬上限":
+   - 训练循环里写死了一个上限: 只有当 `gaussians.get_xyz.shape[0] < 360000` 才会 densify(见 `train.py`).
+   - 因此在不改代码的前提下,点数通常不会超过 36 万.
+4. prune 会在点数较大时抑制增长:
+   - 例如当点数 > 20 万时,训练循环会进入 prune 分支(见 `train.py`),
+     一边 densify,一边按 opacity/屏幕大小等条件裁掉不重要的点.
+
+如果你希望点数变大,推荐按目标分两档调整:
+
+- 目标: 30 万以内(不改代码,改配置即可).
+  - 把 `arguments/multipleview/default.py` 里的 `densify_until_iter` 提高到 20000 或 30000.
+  - 预期结果: 点数增长更久,但显存与训练耗时也会增加.
+- 目标: 接近 FreeTimeGsVanilla 那种 100 万级(需要改代码).
+  - 需要同时:
+    - 提高 `densify_until_iter`(配置).
+    - 把 `train.py` 里 densify 的 `360000` 硬上限改大.
+  - 注意: 点数越大,保存出来的 `point_cloud.ply`/checkpoint 也会按比例变大.
+
+一个快速检查点数的方式(读取 PLY 头部):
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+path = Path("output/point_cloud/iteration_30000/point_cloud.ply")
+with path.open("rb") as f:
+    for _ in range(200):
+        line = f.readline().decode("ascii", errors="ignore").strip()
+        if line.startswith("element vertex "):
+            print(line)
+            break
+PY
+```
+
+#### FAQ: 为什么本项目的 `output/point_cloud/iteration_x/` 比 FreeTimeGsVanilla 的 `ckpt_*.pt` 小很多?
+
+这两者本质上不是同一种东西,对比时需要先对齐"保存内容":
+
+- 本项目的 `output/point_cloud/iteration_x/` 更像是"渲染/评估用快照":
+  - 主要包含 `point_cloud.ply`(高斯参数) + `deformation.pth`(deformation 网络权重)等.
+  - 默认不保存 optimizer state,因此体积相对小.
+- 本项目的"可继续训练的 checkpoint"是 `chkpnt_*_x.pth`:
+  - 只有当你在训练时传入 `--checkpoint_iterations ...` 才会生成(见 `train.py` 的保存逻辑).
+  - 该 checkpoint 会包含 optimizer state(用于 resume),体积会明显增大.
+- FreeTimeGsVanilla 的 `ckpt_*.pt` 通常会同时保存:
+  - 模型参数(例如 splats/SH 等).
+  - optimizer state(例如 Adam 的 `exp_avg`/`exp_avg_sq`),因此体积非常大(常见接近"参数本体的 3 倍").
+
+建议的公平对比方式:
+
+- 比"推理/渲染模型大小": 只对比模型参数本体(不要把 optimizer state 算进去).
+- 比"可继续训练的完整 checkpoint": 两边都保存 optimizer state,再比体积与恢复训练行为.
+
+补充: 在 PyTorch >= 2.6 中,`torch.load()` 的 `weights_only` 默认值发生过变化.
+如果你要加载含有 python 对象的旧 checkpoint,可能需要显式 `weights_only=False`.
+请只对你信任来源的 checkpoint 这么做(因为 pickle 反序列化存在代码执行风险).
 
 #### Important flags
 
@@ -264,8 +337,15 @@ pixi run train \
 #### Verify output
 
 ```bash
-pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release'); print('ok', len(s.train_cameras), len(s.test_cameras))"
+pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release'); print('ok', len(s.train_cameras), len(s.test_cameras), len(s.video_cameras))"
 ```
+
+说明:
+- MultipleView 的 train/test 现在采用"按相机切分"(camera hold-out),而不是"每个相机抽几帧".
+  - `len(train_cameras) = 训练相机数 * 每路相机帧数`
+  - `len(test_cameras) = hold-out 相机数 * 每路相机帧数`
+- `llffhold` 控制 hold-out 的相机选择(按 cam_id 排序后,idx % llffhold == 0 的相机进入 test).
+  - 如果你只想 hold-out 一路相机用于渲染/观察,可以把 `--llffhold` 设得很大(例如 `9999`),这样通常只会把 `cam01` 分到 test.
 
 
 ## Training
@@ -298,16 +378,21 @@ python scripts/downsample_point.py data/hypernerf/virg/broom2/colmap/dense/works
 python train.py -s  data/hypernerf/virg/broom2/ --port 6017 --expname "hypernerf/broom2" --configs arguments/hypernerf/broom2.py 
 ```
 
-For training multipleviews scenes,you are supposed to build a configuration file named (you dataset name).py under "./arguments/mutipleview",after that,run
+For training multipleviews scenes, you can start with the baseline config `arguments/multipleview/default.py`.
+If you want a per-dataset config, copy it to `arguments/multipleview/(your dataset name).py` (or inherit via `_base_`) and use that file path in `--configs`.
 ```python
-python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(you dataset name).py 
+# Quick start (recommended): use the baseline config shipped with this repo.
+python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/default.py
+
+# If you created `arguments/multipleview/(your dataset name).py`, point `--configs` to it instead.
+python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(your dataset name).py
 ```
 
 MultipleView 的训练侧下采样(用于对齐 FreeTimeGsVanilla 的 `data_factor`)可以直接用 `--resolution`:
 
 ```python
 # 等价 data_factor=4: 训练侧把图像与 focal 都按 4x 下采样(落盘原图不变)
-python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(you dataset name).py --resolution 4
+python train.py -s  data/multipleview/(your dataset name) --port 6017 --expname "multipleview/(your dataset name)" --configs arguments/multipleview/(your dataset name).py --resolution 4
 ```
 
 
@@ -344,6 +429,16 @@ Run the following script to render the images.
 ```
 python render.py --model_path "output/dnerf/bouncingballs/"  --skip_train --configs arguments/dnerf/bouncingballs.py 
 ```
+
+MultipleView 补充说明:
+- MultipleView 的 `test` 集合可能包含多路 hold-out 相机.
+- 为了避免把不同视角硬拼成一条 mp4 导致"视角乱跳",render 会在 `output/test/ours_*/` 下额外输出:
+  - `video_rgb.mp4`: 默认指向 `cam01` 的完整时间序列(便于直接观看).
+  - `video_rgb_camXX.mp4`: 每路相机各一条 mp4.
+  - `video_rgb_allcams.mp4`: 按 dataset 顺序把所有 test 帧拼成一条(仅用于对照,可能会跳视角).
+- 如果你看到过 imageio 的 `macro_block_size=16` resize warning:
+  - 这是因为 (H,W) 不是 16 的倍数时,ffmpeg writer 会为了兼容性自动 resize.
+  - 本仓库现在会在写 mp4 前对帧做 edge padding 到 16 倍数,避免隐式 resize 与 warning.
 
 ## Evaluation
 

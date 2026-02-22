@@ -340,3 +340,165 @@ FreeTimeGsVanilla 的 mp4 pipeline 示例通常是:
   `.direnv/` 目录已被 `.gitignore` 忽略,不会进入仓库历史.
 - 代理也改为显式开关:
   - 只有设置 `USE_LOCAL_PROXY=1` 时才启用本地 7897,避免默认误伤无代理环境.
+
+## 2026-02-22T07:39:20+00:00 笔记: MultipleView 渲染"视角乱跳"的根因
+
+### 复现与证据
+
+- 用户运行:
+  - `pixi run python render.py --model_path output --skip_train --configs arguments/multipleview/default.py`
+- 输出目录里同时存在两条 mp4:
+  - `output/test/ours_30000/video_rgb.mp4`
+  - `output/video/ours_30000/video_rgb.mp4`
+- 统计帧数(通过 renders 图片数量验证):
+  - `output/test/ours_30000/renders`: 54 张
+    - 54 = 18 cams * 3 frames,符合当前 MultipleView test split 的实现.
+  - `output/video/ours_30000/renders`: 300 张
+    - 来自 `get_spiral(..., N_views=300)` 的渲染相机轨迹.
+
+### 结论(根因)
+
+- "视角乱跳"主要来自 `test` 视频把多相机视角的帧串接成一条 mp4.
+- MultipleView 当前 test split 是"每个相机抽 3 帧",并不是"按相机 hold-out".
+  - 因此 test mp4 既会跳视角,也很难用来观察完整时间序列的动态效果.
+
+### 额外确认: spiral 相机轨迹本身是连续的
+
+- 对 `poses_bounds_multipleview.npy` 生成的 spiral camera path 做数值检查:
+  - 相机位置步长的 max/mean 约 1.53,没有离群的 spike.
+  - 相机旋转步长也平滑,没有翻转式跳变.
+- 因此 `output/video/...` 的"乱跳"概率较低,更可能是用户打开了 `output/test/...` 的 mp4.
+
+## 2026-02-22T07:56:51+00:00 笔记: imageio 写 mp4 的 macro_block_size 自动 resize 警告
+
+### 现象
+
+- 渲染 MultipleView 后,终端出现多条 warning:
+  - `IMAGEIO FFMPEG_WRITER WARNING: input image is not divisible by macro_block_size=16, resizing from (527, 940) to (528, 944) ...`
+
+### 根因
+
+- MultipleView 当前在 `--resolution 4` 下采用 floor 下采样:
+  - `H = 2110 // 4 = 527`
+  - `W = 3760 // 4 = 940`
+- (527,940) 不是 16 的倍数.
+- imageio 的 ffmpeg writer 为了编码兼容性会自动把帧 resize 到 (528,944).
+  - 这不是训练/渲染数值错误.
+  - 但它属于"静默改变输出像素",也会让日志看起来像出错.
+
+### 解决思路
+
+- 更稳的做法是写 mp4 前对帧做 padding 到 16 倍数:
+  - 不缩放,只补边.
+  - 兼容性也更好.
+
+---
+
+# 笔记: 为什么本项目 iteration_30000 很小,而 FreeTime ckpt 很大
+
+时间: 2026-02-22T08:44:30+00:00
+
+## 本项目(4DGaussians)实际保存了什么
+
+目录: `output/point_cloud/iteration_30000/`
+
+- `point_cloud.ply`
+  - PLY 头部: `element vertex 119497`
+  - property 数: 62 个 float32,即每个高斯 62*4=248 bytes.
+  - 预期数据体积: 119497*248=28.26MB,与文件实际体积(约 28.26MB)一致.
+- `deformation.pth`
+  - `torch.save(self._deformation.state_dict(), ...)`,主要是 deformation 网络权重.
+  - 体积约 9.5MB.
+- `deformation_table.pth`
+  - bool tensor,shape=(119497,),约 0.11MB.
+- `deformation_accum.pth`
+  - float32 tensor,shape=(119497,3),约 1.37MB.
+
+结论: 本项目的 `iteration_30000` 更像是"可渲染/可加载的模型快照",不包含 optimizer state.
+
+代码位置:
+- `scene/__init__.py`: `Scene.save()` 只调用 `save_ply()` + `save_deformation()`.
+- `scene/gaussian_model.py`: `save_ply()` 写 PLY,`save_deformation()` 只保存 deformation 相关张量.
+- `scene/gaussian_model.py`: `capture()` 里才会包含 `self.optimizer.state_dict()`.
+- `train.py`: 只有传 `--checkpoint_iterations` 才会 `torch.save((gaussians.capture(), iteration), ...)` 生成 `chkpnt_*.pth`.
+
+## FreeTimeGsVanilla checkpoint 实际保存了什么
+
+文件: `/cloud/cloud-ssd1/FreeTimeGsVanilla/results/bar_release_full/out_0_61/ckpts/ckpt_29999.pt`
+
+- 文件大小: 978MB.
+- 顶层 keys: `step`, `splats`, `optimizers`.
+- `splats`(模型参数)共 9 个 tensor,高斯数量 N=1,335,131.
+  - splats 总张量体积约 325.96MB.
+  - 其中 `shN` 约 229.19MB(最大头).
+- `optimizers`(Adam 状态)也按 9 组参数存.
+  - optimizers 总张量体积约 651.92MB.
+  - 其中 `optimizers.shN` 约 458.38MB,来自 `exp_avg` + `exp_avg_sq` 两份与 `shN` 同 shape 的张量.
+
+结论: FreeTime 的 `.pt` 是"可继续训练的完整 checkpoint".
+它既保存了模型参数,也保存了 Adam 的一阶/二阶动量,因此体积大约是(模型参数) + 2*(模型参数).
+此外,它的高斯数量 133 万,也显著多于本项目示例的 11.9 万,模型参数本身就会更大.
+
+## 2026-02-22T08:48:56+00:00 追加: MultipleView video 镜头在中心视角停留更久
+
+### 用户诉求
+
+- 用户渲染命令:
+  - `pixi run python render.py --model_path "output" --skip_train --configs arguments/multipleview/default.py`
+- 关注的输出:
+  - `output/video/ours_30000/video_rgb.mp4`
+- 希望:
+  - spiral novel-view 轨迹不要一开始就快速绕圈.
+  - 镜头在"中心视角"附近能停留更久(相机更稳,更便于观察动作).
+
+### 轨迹生成链路(定位结果)
+
+- `render.py` 的 `name=="video"` 会渲染 `scene.getVideoCameras()`.
+- MultipleView 的 `video_cameras` 来自:
+  - `scene/dataset_readers.py:readMultipleViewinfos()` -> `test_cam_infos.video_cam_infos`
+  - `scene/multipleview_dataset.py:multipleview_dataset.__init__()` 在 `split=="test"` 时构建 `video_cam_infos`
+  - `scene/multipleview_dataset.py:get_video_cam_infos()` 读取 `poses_bounds_multipleview.npy`,调用 `scene/neural_3D_dataset_NDC.py:get_spiral()` 生成 spiral pose.
+
+### 落地方案(已实现)
+
+- 在 MultipleView 数据集侧对 spiral 轨迹做可配置改良:
+  - `video_spiral_hold_start`: 在起始 pose 处重复若干帧(相机不动),但 time 仍随帧推进.
+  - `video_spiral_n_rots`: 控制绕圈次数(默认 2,可改成 1 让运动更慢更稳).
+  - `video_spiral_rads_scale`: 控制轨迹半径缩放(默认 1.0,可调小让镜头更靠近中心).
+  - `video_n_views`: spiral 轨迹的基础采样帧数(默认 300).
+- 默认配置已写入:
+  - `arguments/multipleview/default.py`: `ModelParams.video_spiral_hold_start=60`,`video_spiral_n_rots=1`.
+
+### 兼容性处理(重要)
+
+- 旧模型的 `output/cfg_args` 里不包含新字段.
+- 为避免渲染阶段缺字段导致参数无法生效:
+  - `utils/params_utils.py:merge_hparams()` 改为允许在 merge 配置文件时“补齐字段”.
+  - `scene/__init__.py` 在调用 MultipleView reader 时用 `getattr(args, ..., default)` 做兜底.
+
+## 2026-02-22T09:43:07+00:00 追加: MultipleView video 的 time 应按真实帧数 loop
+
+### 用户反馈
+
+- 用户指出: “如果你想生成 300 帧动画,但实际有效帧只有 x<300,那么你可以 loop”.
+
+### 根因总结
+
+- MultipleView 的真实时间序列长度是 x(例如每路相机 61 帧).
+- spiral video 的相机轨迹采样帧数是 N(默认 300).
+- 若 time 用线性 `i/N`,动作会被拉慢约 N/x 倍,肉眼就会觉得“该动的没动”.
+
+### 修复方案(已落地)
+
+- 增加 `video_time_mode`:
+  - `linear`: 旧行为 `time=i/N`.
+  - `loop`: 新行为 `time=(i % x)/x`,其中 x 来自 `data/.../cam01` 的帧数统计.
+- MultipleView 默认配置改为启用 loop:
+  - `arguments/multipleview/default.py`: `video_time_mode=\"loop\"`.
+  - 同时把 `video_spiral_hold_start` 默认回退为 0(不额外停留).
+
+### 验证证据(本地)
+
+- 对 `bar-release_fullres_0_61`:
+  - `video_len` 为 300.
+  - `time[60]≈60/61`, `time[61]=0.0`,证明 time 每 61 帧循环一次.

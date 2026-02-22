@@ -61,7 +61,19 @@ class Scene:
         elif os.path.exists(os.path.join(args.source_path,"points3D_multipleview.ply")):
             # MultipleView: 支持用 `--resolution` 在训练侧做等价 data_factor 的下采样,
             # 用于与 FreeTimeGsVanilla 等 pipeline 做公平评估对比.
-            scene_info = sceneLoadTypeCallbacks["MultipleView"](args.source_path, args.llffhold, args.resolution)
+            # MultipleView video(spiral) 轨迹参数:
+            # - 兼容旧模型: 老的 `output/cfg_args` 里可能没有这些字段,因此用 getattr 提供默认值.
+            scene_info = sceneLoadTypeCallbacks["MultipleView"](
+                args.source_path,
+                args.llffhold,
+                args.resolution,
+                video_n_views=getattr(args, "video_n_views", 300),
+                video_spiral_n_rots=getattr(args, "video_spiral_n_rots", 2),
+                video_spiral_rads_scale=getattr(args, "video_spiral_rads_scale", 1.0),
+                video_spiral_hold_start=getattr(args, "video_spiral_hold_start", 0),
+                video_time_mode=getattr(args, "video_time_mode", "linear"),
+                video_time_loop_period=getattr(args, "video_time_loop_period", 0),
+            )
             dataset_type="MultipleView"
         else:
             assert False, "Could not recognize scene type!"

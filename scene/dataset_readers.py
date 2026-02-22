@@ -593,13 +593,79 @@ def readPanopticSportsinfos(datadir):
                            )
     return scene_info
 
-def readMultipleViewinfos(datadir, llffhold=8, resolution=-1):
+def readMultipleViewinfos(
+    datadir,
+    llffhold=8,
+    resolution=-1,
+    video_n_views=300,
+    video_spiral_n_rots=2,
+    video_spiral_rads_scale=1.0,
+    video_spiral_hold_start=0,
+    video_time_mode="linear",
+    video_time_loop_period=0,
+):
 
     cameras_extrinsic_file = os.path.join(datadir, "sparse_/images.bin")
     cameras_intrinsic_file = os.path.join(datadir, "sparse_/cameras.bin")
     cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
     cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     from scene.multipleview_dataset import multipleview_dataset
+
+    # MultipleView 的 split 设计(改良版):
+    # - train/test 采用 camera-level hold-out,而不是"每个相机抽几帧".
+    # - 这样渲染出来的 test mp4 才会是"单相机的完整时间序列",观看体验更自然.
+    #
+    # 具体做法:
+    # - 解析 COLMAP 的 image name: imageN.jpg => cam_id=N
+    # - 按 cam_id 排序后,用 llffhold 做周期性抽样来选择 test 相机:
+    #   - idx % llffhold == 0 => test cam
+    # - 其余相机进入 train.
+    def _parse_cam_id_from_colmap_name(name: str) -> int | None:
+        base = os.path.basename(str(name))
+        stem, _ = os.path.splitext(base)
+        if not stem.startswith("image"):
+            return None
+        suffix = stem[len("image") :]
+        if not suffix.isdigit():
+            return None
+        return int(suffix)
+
+    cam_ids: list[int] = []
+    for key in cam_extrinsics:
+        extr = cam_extrinsics[key]
+        cam_id = _parse_cam_id_from_colmap_name(getattr(extr, "name", ""))
+        if cam_id is None:
+            continue
+        cam_ids.append(int(cam_id))
+    cam_ids = sorted({int(x) for x in cam_ids})
+    if not cam_ids:
+        raise ValueError(
+            "MultipleView: 无法从 sparse_/images.bin 解析出 cam id. "
+            "请确认 COLMAP 的 image name 是否为 imageN.jpg(例如 image1.jpg)."
+        )
+
+    hold = 0
+    try:
+        if llffhold is not None:
+            hold = int(llffhold)
+    except Exception:
+        hold = 0
+
+    # 兜底规则:
+    # - hold<=0: 只 hold-out 第一个相机(更像 dynerf 的 eval_index=0).
+    # - hold==1: 会导致 test 包含全部相机,训练集为空,因此强制退化为"只 hold-out 第一个相机".
+    if hold <= 1:
+        test_cam_ids = [cam_ids[0]]
+        train_cam_ids = cam_ids[1:] if len(cam_ids) > 1 else cam_ids
+    else:
+        test_cam_ids = [cam_id for idx, cam_id in enumerate(cam_ids) if idx % hold == 0]
+        if not test_cam_ids:
+            test_cam_ids = [cam_ids[0]]
+        test_set = set(test_cam_ids)
+        train_cam_ids = [cam_id for cam_id in cam_ids if cam_id not in test_set]
+        if not train_cam_ids and len(cam_ids) > 1:
+            test_cam_ids = [cam_ids[0]]
+            train_cam_ids = cam_ids[1:]
 
     # MultipleView 的 downsample 语义:
     # - resolution <= 0: 使用落盘原分辨率.
@@ -617,6 +683,13 @@ def readMultipleViewinfos(datadir, llffhold=8, resolution=-1):
         cam_folder=datadir,
         split="train",
         downsample_factor=downsample_factor,
+        cam_ids=train_cam_ids,
+        video_n_views=video_n_views,
+        video_spiral_n_rots=video_spiral_n_rots,
+        video_spiral_rads_scale=video_spiral_rads_scale,
+        video_spiral_hold_start=video_spiral_hold_start,
+        video_time_mode=video_time_mode,
+        video_time_loop_period=video_time_loop_period,
     )
     test_cam_infos = multipleview_dataset(
         cam_extrinsics=cam_extrinsics,
@@ -624,6 +697,13 @@ def readMultipleViewinfos(datadir, llffhold=8, resolution=-1):
         cam_folder=datadir,
         split="test",
         downsample_factor=downsample_factor,
+        cam_ids=test_cam_ids,
+        video_n_views=video_n_views,
+        video_spiral_n_rots=video_spiral_n_rots,
+        video_spiral_rads_scale=video_spiral_rads_scale,
+        video_spiral_hold_start=video_spiral_hold_start,
+        video_time_mode=video_time_mode,
+        video_time_loop_period=video_time_loop_period,
     )
 
     train_cam_infos_ = format_infos(train_cam_infos,"train")

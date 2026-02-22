@@ -58,6 +58,23 @@ class ModelParams(ParamGroup):
         self.add_points=False
         self.extension=".png"
         self.llffhold=8
+        # video 渲染相关(主要影响 `render.py` 的 "video" 输出).
+        # 说明:
+        # - 这些参数用于控制 spiral 相机轨迹,不会影响训练结果本身.
+        # - 默认保持旧行为: 300 帧,2 圈,不额外停留.
+        self.video_n_views = 300
+        self.video_spiral_n_rots = 2
+        self.video_spiral_rads_scale = 1.0
+        self.video_spiral_hold_start = 0
+        # video 时间维度控制:
+        # - linear: time 按 [0,1) 均匀推进,适合“真实序列长度≈video 帧数”的情况.
+        # - loop: 当真实序列长度 x 远小于 video 帧数 N 时,让 time 按 x 循环播放,避免动作被拉慢.
+        #
+        # 说明:
+        # - 对 MultipleView 来说,x 通常是每路相机的帧数(例如 61).
+        # - loop 模式下,若 video_time_loop_period<=0,则自动用 x 作为周期.
+        self.video_time_mode = "linear"
+        self.video_time_loop_period = 0
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

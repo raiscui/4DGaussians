@@ -92,7 +92,10 @@ def merge_hparams(args, config):
     for param in params:
         if param in config.keys():
             for key, value in config[param].items():
-                if hasattr(args, key):
-                    setattr(args, key, value)
+                # 兼容旧的 `output/cfg_args`:
+                # - 旧模型的 cfg_args 里可能缺少新字段(例如后续新增的渲染/数据集参数).
+                # - render.py 会先读 cfg_args 再 merge 配置文件,因此这里允许“补齐字段”.
+                # - 若 key 写错,属性也会被设置但不会被代码使用;因此建议优先把常用参数做成 argparse 字段.
+                setattr(args, key, value)
 
     return args

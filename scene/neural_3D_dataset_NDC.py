@@ -182,7 +182,7 @@ def process_videos(videos, skip_index, img_wh, downsample, transform, num_worker
                 current_index += 1
     return all_imgs
 
-def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
+def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120, N_rots=2, zrate=0.5):
     """
     Generate a set of poses using NeRF's spiral camera trajectory as validation poses.
     """
@@ -202,7 +202,7 @@ def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
     tt = c2ws_all[:, :3, 3]
     rads = np.percentile(np.abs(tt), 90, 0) * rads_scale
     render_poses = render_path_spiral(
-        c2w, up, rads, focal, zdelta, zrate=0.5, N=N_views
+        c2w, up, rads, focal, zdelta, zrate=float(zrate), N_rots=float(N_rots), N=int(N_views)
     )
     return np.stack(render_poses)
 
@@ -374,4 +374,3 @@ class Neural3D_NDC_Dataset(Dataset):
         return img, self.image_poses[index], self.image_times[index]
     def load_pose(self,index):
         return self.image_poses[index]
-

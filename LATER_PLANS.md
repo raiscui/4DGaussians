@@ -24,3 +24,27 @@
 ## 2026-02-21T13:43:41+00:00
 
 - (候选) `scripts/preprocess_multipleview_from_videos.py` 在检测到 `SIGKILL`/`OOM` 时,自动用更保守的 COLMAP SIFT 参数重试一次(减少用户手动调参成本).
+
+## 2026-02-22T07:47:00+00:00
+
+- (候选) `render.py` 的 `imageio.mimwrite` 在输出 mp4 时可能触发 `macro_block_size=16` 的自动 resize 警告.
+  - 可选改良方向:
+    - 方案A: 输出前对帧做 padding,让 (H,W) 都是 16 的倍数(不改有效内容,避免 codec 限制).
+    - 方案B: `mimwrite(..., macro_block_size=1)` 禁止自动 resize(但可能牺牲部分播放器兼容性).
+
+## 2026-02-22T07:59:50+00:00
+
+- 已完成: 已在 `render.py` 写 mp4 前对帧做 edge padding 到 16 的倍数.
+  - 不再触发 `macro_block_size=16` warning.
+  - 也避免了 imageio 的隐式 resize(插值).
+
+## 2026-02-22T08:44:40+00:00
+
+- (候选) 增加一个小工具脚本: 输入 `.ply` 或 `.pt/.pth` 路径,自动打印"高斯数量,每部分 tensor 占用(MB),是否包含 optimizer state",方便对比不同方法的体积来源.
+
+## 2026-02-22T08:48:56+00:00
+
+- (候选) MultipleView 的 spiral video 轨迹再增强:
+  - 增加 `video_spiral_hold_end`: 结尾也停留 N 帧,方便视频收尾更稳.
+  - 增加 `video_spiral_hold_pose`: 支持选择停留在 `avg_pose`(平均位姿) 或 `start_pose`(spiral 第 1 帧),便于对齐“中心视角”的直觉.
+  - 增加 `video_spiral_theta_schedule`: 例如 ease-in-out,在整段轨迹上做平滑加减速,减少“突然开始转”的观感.

@@ -198,6 +198,45 @@
 
 - `returncode=-9` 表示进程被 `SIGKILL` 终止.
   - 最常见原因是系统/容器 OOM killer(内存不足)直接杀死进程.
+
+## 2026-02-22T07:47:00+00:00
+
+### 问题
+
+渲染 MultipleView 模型时,生成的 `output/test/ours_*/video_rgb.mp4` 观看上"视角乱跳".
+同一命令在 `dnerf/bouncingballs` 上不会出现该观感问题.
+
+复现命令(用户侧):
+
+- `pixi run python render.py --model_path output --skip_train --configs arguments/multipleview/default.py`
+
+### 原因
+
+- MultipleView 旧的 test split 实现是"每个相机只抽 3 帧".
+- render 侧把 test 集合里的多相机帧按 index 顺序直接拼成一条 mp4.
+- 对多相机数据来说,该 mp4 会频繁切换机位,肉眼看起来就是"视角乱跳".
+
+### 修复
+
+1. MultipleView train/test 改为 camera-level hold-out:
+   - `readMultipleViewinfos()` 解析 COLMAP 的 `imageN.jpg` => cam_id=N.
+   - cam_id 排序后,按 `llffhold` 把部分相机划入 test,其余划入 train.
+   - train/test 都保留完整时间序列(不再对 test 只取 3 帧).
+2. render 对 MultipleView 的 test 额外按相机输出 mp4:
+   - `video_rgb.mp4` 默认输出 primary 相机(最小 cam_id,通常 cam01)的完整时间序列.
+   - 同时输出 `video_rgb_camXX.mp4` 以及 `video_rgb_allcams.mp4` 便于对照.
+
+### 验证方式
+
+- 检查 dataset 划分与长度:
+  - `pixi run python -c "from scene.dataset_readers import readMultipleViewinfos; s=readMultipleViewinfos('data/multipleview/bar-release_fullres_0_61', llffhold=8, resolution=4); print(len(s.train_cameras), len(s.test_cameras), len(s.video_cameras))"`
+  - 预期: `915 183 300`
+- 渲染 test 并确认 mp4 命名:
+  - `pixi run python render.py --model_path output --iteration 30000 --skip_train --skip_video --configs arguments/multipleview/default.py`
+  - 预期: `output/test/ours_30000/` 下存在:
+    - `video_rgb.mp4`(cam01)
+    - `video_rgb_cam01.mp4`,`video_rgb_cam09.mp4`,`video_rgb_cam17.mp4`
+    - `video_rgb_allcams.mp4`
 - 脚本原先硬编码了一组比 COLMAP 默认更激进的 SIFT 参数,会显著放大内存峰值:
   - `max_image_size=4096`
   - `max_num_features=16384`
